@@ -4,3 +4,6 @@
 # Environment / secrets
 .env
 .env.local
+
+#don't commit node modules
+*node_modules/*

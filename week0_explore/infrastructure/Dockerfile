@@ -32,7 +32,8 @@ WORKDIR /opt/circlemud
 COPY --from=build /tmp/circlemud /opt/circlemud
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN cp -a /opt/circlemud/lib /opt/circlemud/lib.dist \
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+    && cp -a /opt/circlemud/lib /opt/circlemud/lib.dist \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 4000
