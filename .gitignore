@@ -7,3 +7,6 @@
 
 #don't commit node modules
 *node_modules/*
+
+# generated CircleMUD world JSON (rebuild from infrastructure/lib/world via the parser)
+week0_explore/preview/data/world/

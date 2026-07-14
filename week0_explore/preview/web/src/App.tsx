@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router";
 import { WorldProvider } from "./data/useWorld";
+import { VisitsProvider } from "./data/useVisits";
 import { ZoneScopeProvider } from "./data/zoneScope";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./pages/Dashboard";
@@ -19,37 +20,41 @@ import { Quests } from "./pages/Quests";
 import { QuestDetail } from "./pages/QuestDetail";
 import { MapView } from "./pages/MapView";
 import { WorldMap } from "./pages/WorldMap";
+import { Visits } from "./pages/Visits";
 import { NotFound } from "./pages/NotFound";
 
 export default function App() {
   return (
     <WorldProvider>
-      <BrowserRouter>
-        <ZoneScopeProvider>
-          <Routes>
-            <Route element={<Layout />}>
-              <Route index element={<Dashboard />} />
-              <Route path="rooms" element={<Rooms />} />
-              <Route path="rooms/:id" element={<RoomDetail />} />
-              <Route path="mobs" element={<Mobs />} />
-              <Route path="mobs/:id" element={<MobDetail />} />
-              <Route path="objects" element={<Objects />} />
-              <Route path="objects/:id" element={<ObjectDetail />} />
-              <Route path="zones" element={<Zones />} />
-              <Route path="zones/:id" element={<ZoneDetail />} />
-              <Route path="shops" element={<Shops />} />
-              <Route path="shops/:id" element={<ShopDetail />} />
-              <Route path="triggers" element={<Triggers />} />
-              <Route path="triggers/:id" element={<TriggerDetail />} />
-              <Route path="quests" element={<Quests />} />
-              <Route path="quests/:id" element={<QuestDetail />} />
-              <Route path="map" element={<MapView />} />
-              <Route path="world-map" element={<WorldMap />} />
-              <Route path="*" element={<NotFound />} />
-            </Route>
-          </Routes>
-        </ZoneScopeProvider>
-      </BrowserRouter>
+      <VisitsProvider>
+        <BrowserRouter>
+          <ZoneScopeProvider>
+            <Routes>
+              <Route element={<Layout />}>
+                <Route index element={<Dashboard />} />
+                <Route path="rooms" element={<Rooms />} />
+                <Route path="rooms/:id" element={<RoomDetail />} />
+                <Route path="mobs" element={<Mobs />} />
+                <Route path="mobs/:id" element={<MobDetail />} />
+                <Route path="objects" element={<Objects />} />
+                <Route path="objects/:id" element={<ObjectDetail />} />
+                <Route path="zones" element={<Zones />} />
+                <Route path="zones/:id" element={<ZoneDetail />} />
+                <Route path="shops" element={<Shops />} />
+                <Route path="shops/:id" element={<ShopDetail />} />
+                <Route path="triggers" element={<Triggers />} />
+                <Route path="triggers/:id" element={<TriggerDetail />} />
+                <Route path="quests" element={<Quests />} />
+                <Route path="quests/:id" element={<QuestDetail />} />
+                <Route path="visits" element={<Visits />} />
+                <Route path="map" element={<MapView />} />
+                <Route path="world-map" element={<WorldMap />} />
+                <Route path="*" element={<NotFound />} />
+              </Route>
+            </Routes>
+          </ZoneScopeProvider>
+        </BrowserRouter>
+      </VisitsProvider>
     </WorldProvider>
   );
 }

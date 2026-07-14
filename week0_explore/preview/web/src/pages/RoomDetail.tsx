@@ -1,5 +1,6 @@
 import { useParams } from "react-router";
 import { useWorld } from "../data/useWorld";
+import { useVisits } from "../data/useVisits";
 import { DIRECTIONS } from "../data/types";
 import { FlagList } from "../components/FlagList";
 import { JsonView } from "../components/JsonView";
@@ -9,6 +10,7 @@ import { NotFound } from "./NotFound";
 export function RoomDetail() {
   const { id } = useParams();
   const { world, relations } = useWorld();
+  const { addVisit, hasVisited } = useVisits();
   const room = world.rooms[Number(id)];
   if (!room) return <NotFound kind="room" id={id} />;
 
@@ -16,6 +18,8 @@ export function RoomDetail() {
   const inbound = relations.inboundExits(room.id);
   const contents = relations.contentsOfRoom(room.id);
   const shops = relations.shopsInRoom(room.id);
+
+  const visited = hasVisited(room.id);
 
   return (
     <article className="detail">
@@ -31,6 +35,21 @@ export function RoomDetail() {
             </span>
           )}
         </div>
+        <button
+          onClick={() => addVisit(room.id, room.name)}
+          style={{
+            marginTop: "12px",
+            padding: "8px 16px",
+            backgroundColor: visited ? "#10b981" : "#3b82f6",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: "pointer",
+            fontSize: "14px",
+          }}
+        >
+          {visited ? "✓ Visited" : "Visit Location"}
+        </button>
       </header>
 
       <section>

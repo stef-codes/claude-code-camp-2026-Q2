@@ -17,6 +17,7 @@ const NAV: { to: string; label: string; countKey?: keyof TypeCounts | "zones" }[
   { to: "/shops", label: "Shops", countKey: "shops" },
   { to: "/triggers", label: "Triggers", countKey: "triggers" },
   { to: "/quests", label: "Quests", countKey: "quests" },
+  { to: "/visits", label: "Visits" },
   { to: "/map", label: "Map" },
   { to: "/world-map", label: "World Map" },
 ];
