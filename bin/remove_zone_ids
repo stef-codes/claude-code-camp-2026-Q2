@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Remove zone identifiers (quarantine extended attributes) from all files in the project
+# This resolves "cannot be opened because it is from an unidentified developer" warnings on macOS
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+find "$PROJECT_ROOT" -type f -exec xattr -d com.apple.quarantine {} + 2>/dev/null
+
+echo "Zone identifiers removed from $PROJECT_ROOT"

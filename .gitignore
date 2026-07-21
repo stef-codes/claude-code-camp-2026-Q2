@@ -1,9 +1,9 @@
 # Windows Zone.Identifier files (WSL download metadata)
-*:Zone.Identifier
+*Zone.Identifier
 
 # Environment / secrets
 .env
-.env.local
+.env.localcl
 
 #don't commit node modules
 *node_modules/*
