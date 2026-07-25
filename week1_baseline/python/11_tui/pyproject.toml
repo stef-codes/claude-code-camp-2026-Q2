@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "boukensha"
+version = "0.11.1"
+description = "Python port of the Boukensha 11_tui step (a Textual-based terminal UI, substituting for Ruby's charm/bubbletea)."
+requires-python = ">=3.14"
+dependencies = [
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "textual>=0.60",
+]
+
+[project.scripts]
+boukensha = "boukensha_loader:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["boukensha", "boukensha_loader.py"]

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# NOTE: unlike every other bin/python/* script, this one deliberately does
+# NOT `cd` into the step directory. Config's directory resolution (as of
+# this step) checks for a `.boukensha/` dir in the current working
+# directory as a fallback tier, so the REPL is designed to be launched from
+# the repo root with cwd left alone. `uv run --project` points uv at the
+# right pyproject.toml/venv without changing the process's cwd.
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+uv run --project "$script_dir/../../python/08_the_repl_loop" \
+  python "$script_dir/../../python/08_the_repl_loop/examples/example.py"

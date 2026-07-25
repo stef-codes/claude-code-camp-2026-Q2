@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/../../python/12_context"
+uv run python bin/boukensha "$@"

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# NOTE: unlike every other bin/* dispatcher, this one deliberately does NOT
+# `cd` into the step directory before running — see bin/python/08_the_repl_loop
+# for why (Config's CWD-based directory lookup, new as of this step).
+
+lang="${BOUKENSHA_LANG:-ruby}"
+[[ "${1:-}" == "--python" ]] && lang="python"
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+
+case "$lang" in
+  ruby)
+    BUNDLE_GEMFILE="$script_dir/../ruby/08_the_repl_loop/Gemfile" \
+      bundle exec ruby "$script_dir/../ruby/08_the_repl_loop/examples/example.rb"
+    ;;
+  python)
+    uv run --project "$script_dir/../python/08_the_repl_loop" \
+      python "$script_dir/../python/08_the_repl_loop/examples/example.py"
+    ;;
+  *)
+    echo "unknown BOUKENSHA_LANG: $lang" >&2
+    exit 1
+    ;;
+esac

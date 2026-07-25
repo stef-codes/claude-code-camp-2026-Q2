@@ -1,0 +1,410 @@
+<title>lib/boukensha — file map (Steps 2–3)</title>
+<style>
+  :root {
+    --canvas: #ffffff;
+    --ink: #343330;
+    --ink-soft: #6b6a66;
+    --stroke: #37352f;
+    --stroke-dashed: #8a8880;
+    --panel: #fbfaf8;
+  }
+
+  :root[data-theme="dark"] {
+    --canvas: #1e1e1e;
+    --ink: #e7e5df;
+    --ink-soft: #a6a39a;
+    --stroke: #cfccc3;
+    --stroke-dashed: #85827a;
+    --panel: #262625;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --canvas: #1e1e1e;
+      --ink: #e7e5df;
+      --ink-soft: #a6a39a;
+      --stroke: #cfccc3;
+      --stroke-dashed: #85827a;
+      --panel: #262625;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: "Segoe Print", "Bradley Hand", "Comic Sans MS", "Chalkboard SE", cursive;
+  }
+
+  .wrap {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 3rem;
+  }
+
+  .eyebrow {
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin: 0 0 0.4rem;
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+
+  h1 {
+    font-weight: 700;
+    font-size: clamp(1.6rem, 3.2vw, 2.4rem);
+    margin: 0 0 0.5rem;
+    text-wrap: balance;
+    line-height: 1.15;
+  }
+
+  .sub {
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+    margin: 0 0 1.5rem;
+    max-width: 68ch;
+    line-height: 1.5;
+  }
+
+  .diagram-frame {
+    overflow-x: auto;
+    border-radius: 10px;
+  }
+
+  svg { display: block; width: 100%; height: auto; min-width: 900px; }
+
+  .box-title {
+    font-weight: 700;
+    font-size: 15px;
+    margin: 0 0 3px;
+    white-space: nowrap;
+  }
+  .box-body {
+    font-size: 12.5px;
+    line-height: 1.42;
+    color: var(--ink);
+  }
+  .box-body.dim { color: var(--ink-soft); }
+  .box-body ul { margin: 0; padding-left: 15px; }
+  .box-body code {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11.5px;
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+    padding: 0 3px;
+    border-radius: 3px;
+  }
+  .box-fo { color: var(--ink); }
+
+  .region-label {
+    font-size: 16px;
+    font-weight: 700;
+    fill: var(--ink);
+  }
+  .region-caption {
+    font-size: 12.5px;
+    fill: var(--ink-soft);
+  }
+  .edge-label {
+    font-size: 12px;
+    fill: var(--ink-soft);
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.4rem;
+    margin-top: 1.3rem;
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+    align-items: center;
+  }
+  .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+  .swatch-line { width: 26px; height: 0; border-top: 2px solid var(--stroke); }
+  .swatch-line.dashed { border-top: 2px dashed var(--stroke-dashed); }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">week1_baseline/ruby &middot; steps 2&ndash;3</p>
+  <h1>lib/boukensha — who requires whom</h1>
+  <p class="sub">
+    Same story as before (Registry dispatches tools, Prompt Builder serializes for a backend) but drawn as the actual
+    files on disk: what each one defines, and which file hands off to which.
+  </p>
+
+  <div class="diagram-frame">
+    <svg viewBox="0 0 1980 1520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="File map of lib/boukensha showing require relationships between registry.rb, context.rb, prompt_builder.rb, backend files and example.rb">
+      <defs>
+        <filter id="rough1" x="-15%" y="-15%" width="130%" height="130%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.011 0.026" numOctaves="2" seed="4" result="noise"/>
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.1" xChannelSelector="R" yChannelSelector="G"/>
+        </filter>
+        <filter id="roughline" x="-30%" y="-30%" width="160%" height="160%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.02 0.07" numOctaves="2" seed="6" result="n"/>
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="3" xChannelSelector="R" yChannelSelector="G"/>
+        </filter>
+        <marker id="arrow" markerWidth="14" markerHeight="14" refX="8" refY="6" orient="auto">
+          <path d="M1,1 L8,6 L1,11" fill="none" stroke="var(--stroke)" stroke-width="1.6" filter="url(#roughline)"/>
+        </marker>
+      </defs>
+
+      <!-- ============ EXTERNAL: provider APIs ============ -->
+      <g>
+        <rect x="1460" y="30" width="470" height="150" rx="8" fill="none" stroke="var(--stroke-dashed)" stroke-width="1.8" stroke-dasharray="7 6" filter="url(#rough1)"/>
+        <foreignObject x="1478" y="46" width="434" height="120">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">Anthropic · OpenAI · Gemini · Ollama</div>
+            <div class="box-body dim">
+              <ul>
+                <li>the real HTTP endpoints each backend targets</li>
+                <li>nothing calls these yet in steps 2&ndash;3</li>
+                <li><code>step 4</code> (<code>api_client.rb</code>) is what actually POSTs <code>to_api_payload</code></li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <path d="M1660,230 C1660,205 1655,195 1655,180" fill="none" stroke="var(--stroke-dashed)" stroke-width="1.8" stroke-dasharray="6 5" marker-end="url(#arrow)" filter="url(#roughline)"/>
+      <text x="1720" y="215" class="edge-label" text-anchor="start">not wired up yet</text>
+
+      <!-- ============ MAIN CONTAINER: lib/boukensha/ ============ -->
+      <rect x="60" y="230" width="1780" height="1040" rx="14" fill="none" stroke="var(--stroke)" stroke-width="2.2" filter="url(#rough1)"/>
+      <text x="92" y="272" class="region-label" font-size="19">lib/boukensha/</text>
+      <text x="92" y="294" class="region-caption">steps 2 (registry) + 3 (prompt builder) &mdash; every file below is required, directly or transitively, by lib/boukensha.rb</text>
+
+      <!-- config.rb -->
+      <g>
+        <rect x="110" y="320" width="300" height="130" rx="8" fill="none" stroke="var(--stroke)" stroke-width="1.9" filter="url(#rough1)"/>
+        <foreignObject x="126" y="334" width="270" height="102">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">config.rb</div>
+            <div class="box-body">
+              <ul>
+                <li><code>Config</code></li>
+                <li>reads <code>settings.yml</code> + <code>.env</code></li>
+                <li><code>config.tasks(:player)</code></li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- tasks/ -->
+      <g>
+        <rect x="460" y="320" width="330" height="130" rx="8" fill="none" stroke="var(--stroke)" stroke-width="1.9" filter="url(#rough1)"/>
+        <foreignObject x="476" y="334" width="300" height="102">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">tasks/base.rb, tasks/player.rb</div>
+            <div class="box-body">
+              <ul>
+                <li><code>Tasks::Base.provider/model</code></li>
+                <li><code>.system_prompt</code> (reads <code>prompts/system.md</code>)</li>
+                <li><code>Tasks::Player.task_name = "player"</code></li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- context.rb (hub) -->
+      <g>
+        <rect x="850" y="310" width="380" height="150" rx="9" fill="none" stroke="var(--stroke)" stroke-width="2.4" filter="url(#rough1)"/>
+        <foreignObject x="868" y="326" width="344" height="120">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">context.rb</div>
+            <div class="box-body">
+              <ul>
+                <li><code>Context</code> &mdash; the shared hub</li>
+                <li><code>task, system, messages[], tools{}</code></li>
+                <li><code>register_tool</code>, <code>add_message</code></li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- message.rb -->
+      <g>
+        <rect x="1280" y="320" width="290" height="130" rx="8" fill="none" stroke="var(--stroke-dashed)" stroke-width="1.6" stroke-dasharray="6 5" filter="url(#rough1)"/>
+        <foreignObject x="1296" y="334" width="260" height="102">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">message.rb</div>
+            <div class="box-body dim">
+              <ul>
+                <li><code>Message = Struct.new(</code></li>
+                <li><code>&nbsp;&nbsp;role, content, tool_use_id)</code></li>
+                <li>used by <code>context.add_message</code></li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- registry.rb -->
+      <g>
+        <rect x="110" y="500" width="680" height="150" rx="9" fill="none" stroke="var(--stroke)" stroke-width="2.1" filter="url(#rough1)"/>
+        <foreignObject x="128" y="516" width="644" height="118">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">registry.rb</div>
+            <div class="box-body">
+              <ul>
+                <li><code>Registry#tool(name, description:, parameters:, &amp;block)</code> &mdash; builds a <code>Tool</code>, stores it on <code>context.tools</code></li>
+                <li><code>Registry#dispatch(name, args)</code> &mdash; looks up the tool, converts string keys &rarr; symbols, calls the block</li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- tool.rb -->
+      <g>
+        <rect x="110" y="680" width="320" height="110" rx="7" fill="none" stroke="var(--stroke-dashed)" stroke-width="1.6" stroke-dasharray="6 5" filter="url(#rough1)"/>
+        <foreignObject x="126" y="694" width="290" height="86">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">tool.rb</div>
+            <div class="box-body dim">
+              <ul>
+                <li><code>Tool = Struct.new(</code></li>
+                <li><code>&nbsp;&nbsp;name, description, parameters, block)</code></li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- errors.rb -->
+      <g>
+        <rect x="460" y="680" width="330" height="110" rx="7" fill="none" stroke="var(--stroke-dashed)" stroke-width="1.6" stroke-dasharray="6 5" filter="url(#rough1)"/>
+        <foreignObject x="476" y="694" width="300" height="86">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">errors.rb</div>
+            <div class="box-body dim">
+              <ul>
+                <li><code>UnknownToolError &lt; StandardError</code></li>
+                <li>raised by <code>Registry#dispatch</code></li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- prompt_builder.rb -->
+      <g>
+        <rect x="850" y="500" width="770" height="130" rx="9" fill="none" stroke="var(--stroke)" stroke-width="2.1" filter="url(#rough1)"/>
+        <foreignObject x="868" y="514" width="734" height="102">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">prompt_builder.rb</div>
+            <div class="box-body">
+              <ul>
+                <li><code>PromptBuilder.new(context, backend)</code></li>
+                <li><code>to_messages / to_tools / to_api_payload / headers / url</code> &mdash; every call just delegates to <code>@backend</code></li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- backends/base.rb -->
+      <g>
+        <rect x="850" y="660" width="770" height="110" rx="8" fill="none" stroke="var(--stroke)" stroke-width="1.9" filter="url(#rough1)"/>
+        <foreignObject x="868" y="674" width="734" height="86">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">backends/base.rb</div>
+            <div class="box-body">
+              <ul>
+                <li><code>Backends::Base</code> &mdash; shared contract: each subclass defines a <code>MODELS</code> table; <code>validate_model!</code> and <code>estimate_cost</code> live here once</li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- backends/*.rb group -->
+      <g>
+        <rect x="850" y="790" width="770" height="200" rx="8" fill="none" stroke="var(--stroke)" stroke-width="1.9" filter="url(#rough1)"/>
+        <foreignObject x="868" y="804" width="734" height="176">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">backends/anthropic.rb &middot; openai.rb &middot; gemini.rb &middot; ollama.rb &middot; ollama_cloud.rb</div>
+            <div class="box-body">
+              <ul>
+                <li>each implements <code>to_messages</code>, <code>to_tools</code>, <code>to_payload</code>, <code>headers</code>, <code>url</code> in that provider's exact JSON shape</li>
+                <li>e.g. <code>anthropic.rb</code>: tool results become a <code>role: "user"</code> message with a <code>tool_result</code> content block &mdash; the other four use their own shapes</li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- notes box (satellite, mirrors README "Considerations") -->
+      <g>
+        <rect x="110" y="820" width="680" height="170" rx="8" fill="none" stroke="var(--stroke-dashed)" stroke-width="1.6" stroke-dasharray="6 5" filter="url(#rough1)"/>
+        <foreignObject x="126" y="834" width="644" height="142">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">Considerations (from each README)</div>
+            <div class="box-body dim">
+              <ul>
+                <li>tool args arrive with string keys (JSON); Ruby blocks want symbol keys &mdash; <code>dispatch</code> is the one place that converts</li>
+                <li>tools still live on <code>context.tools</code>, not <code>Registry</code> itself &mdash; a known wart, fixed in a later step</li>
+                <li>only Anthropic wraps tool results as a "user" message; every other backend uses its own role/part type</li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- ============ example.rb (outside container, drives it) ============ -->
+      <g>
+        <rect x="790" y="1330" width="440" height="120" rx="9" fill="none" stroke="var(--stroke)" stroke-width="2.2" filter="url(#rough1)"/>
+        <foreignObject x="808" y="1344" width="404" height="94">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="box-fo">
+            <div class="box-title">examples/example.rb</div>
+            <div class="box-body">
+              <ul>
+                <li>the script you actually run</li>
+                <li><code>require_relative "../lib/boukensha"</code></li>
+                <li>wires Config &rarr; Context &rarr; Registry &rarr; PromptBuilder, in that order</li>
+              </ul>
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- ============ ARROWS ============ -->
+      <g fill="none" stroke="var(--stroke)" stroke-width="2" stroke-linecap="round">
+        <!-- example.rb up into container -->
+        <path d="M1000,1330 C1000,1300 995,1280 960,1270" marker-end="url(#arrow)" filter="url(#roughline)"/>
+        <!-- config -> tasks -->
+        <path d="M410,385 C430,385 440,385 458,385" marker-end="url(#arrow)" filter="url(#roughline)"/>
+        <!-- tasks -> context -->
+        <path d="M790,385 C815,385 830,385 848,385" marker-end="url(#arrow)" filter="url(#roughline)"/>
+        <!-- context -> registry -->
+        <path d="M900,460 C700,480 550,485 460,498" marker-end="url(#arrow)" filter="url(#roughline)"/>
+        <!-- context -> prompt_builder -->
+        <path d="M1080,460 C1130,475 1180,485 1220,498" marker-end="url(#arrow)" filter="url(#roughline)"/>
+        <!-- prompt_builder -> backends/base -->
+        <path d="M1235,630 C1235,642 1235,648 1235,658" marker-end="url(#arrow)" filter="url(#roughline)"/>
+        <!-- backends/base -> backends group -->
+        <path d="M1235,770 C1235,778 1235,782 1235,788" marker-end="url(#arrow)" filter="url(#roughline)"/>
+      </g>
+
+      <g class="edge-label">
+        <text x="434" y="376" text-anchor="middle">provider/model</text>
+        <text x="820" y="376" text-anchor="middle">system prompt</text>
+        <text x="660" y="470" text-anchor="middle">context.tools{}</text>
+        <text x="1160" y="474" text-anchor="middle">context.messages[] / tools{}</text>
+        <text x="1290" y="648" text-anchor="middle">delegates to @backend</text>
+        <text x="1290" y="780" text-anchor="middle">subclassed by</text>
+        <text x="875" y="1300" text-anchor="middle">runs everything below</text>
+      </g>
+
+    </svg>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><span class="swatch-line"></span> file that does real work in steps 2&ndash;3</div>
+    <div class="legend-item"><span class="swatch-line dashed"></span> small/supporting file, or not wired up yet</div>
+  </div>
+</div>

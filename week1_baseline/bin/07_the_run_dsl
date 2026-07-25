@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+lang="${BOUKENSHA_LANG:-ruby}"
+[[ "${1:-}" == "--python" ]] && lang="python"
+
+case "$lang" in
+  ruby)
+    cd "$(dirname "$0")/../ruby/07_the_run_dsl"
+    bundle exec ruby examples/example.rb
+    ;;
+  python)
+    cd "$(dirname "$0")/../python/07_the_run_dsl"
+    uv run python examples/example.py
+    ;;
+  *)
+    echo "unknown BOUKENSHA_LANG: $lang" >&2
+    exit 1
+    ;;
+esac
