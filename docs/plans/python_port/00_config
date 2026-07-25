@@ -1,0 +1,166 @@
+# Python Port Plan · 00 · Configuration
+
+Goal: port `week1_baseline/ruby/00_config` to Python with equivalent behavior,
+following the same design doc at
+[`week1_baseline/ruby/00_config/README.md`](../../../week1_baseline/ruby/00_config/README.md).
+
+## Reference files (read these to know what to port)
+
+Ruby source (the thing being ported):
+- [`week1_baseline/ruby/00_config/lib/boukensha.rb`](../../../week1_baseline/ruby/00_config/lib/boukensha.rb) — top-level require
+- [`week1_baseline/ruby/00_config/lib/boukensha/config.rb`](../../../week1_baseline/ruby/00_config/lib/boukensha/config.rb) — `Boukensha::Config`
+- [`week1_baseline/ruby/00_config/lib/boukensha/tasks/base.rb`](../../../week1_baseline/ruby/00_config/lib/boukensha/tasks/base.rb) — abstract `Tasks::Base`
+- [`week1_baseline/ruby/00_config/lib/boukensha/tasks/player.rb`](../../../week1_baseline/ruby/00_config/lib/boukensha/tasks/player.rb) — concrete `Tasks::Player`
+- [`week1_baseline/ruby/00_config/prompts/system.md`](../../../week1_baseline/ruby/00_config/prompts/system.md) — default system prompt
+- [`week1_baseline/ruby/00_config/examples/example.rb`](../../../week1_baseline/ruby/00_config/examples/example.rb) — smoke test
+- [`week1_baseline/ruby/00_config/Gemfile`](../../../week1_baseline/ruby/00_config/Gemfile) — deps (`dotenv`)
+- [`week1_baseline/ruby/00_config/README.md`](../../../week1_baseline/ruby/00_config/README.md) — design doc, config schema, known considerations
+- [`week1_baseline/bin/00_config`](../../../week1_baseline/bin/00_config) — bin wrapper that runs the example
+
+Live config instance (for testing against real data):
+- [`.boukensha/settings.yaml`](../../../.boukensha/settings.yaml)
+
+Python conventions already established elsewhere in this repo (for tooling parity):
+- [`week0_explore/circlemud-world-parser/pyproject.toml`](../../../week0_explore/circlemud-world-parser/pyproject.toml) — `uv` + hatchling, `pytest`, `ruff`
+- [`week0_explore/circlemud-world-parser/.python-version`](../../../week0_explore/circlemud-world-parser/.python-version)
+
+## Target file layout
+
+Mirrors the Ruby `lib/` tree under a new `python/00_config/` sibling directory;
+`ruby/00_config/` is untouched except that `bin/00_config` becomes language-aware:
+
+```
+week1_baseline/
+├── bin/
+│   └── 00_config                          # language-aware (Ruby default, --python flag)
+│
+├── ruby/00_config/                        # existing, unchanged
+│   ├── Gemfile
+│   ├── lib/
+│   │   ├── boukensha.rb
+│   │   └── boukensha/
+│   │       ├── config.rb
+│   │       └── tasks/
+│   │           ├── base.rb
+│   │           └── player.rb
+│   ├── prompts/
+│   │   └── system.md
+│   └── examples/
+│       └── example.rb
+│
+└── python/00_config/                      # new
+    ├── pyproject.toml                     # uv + hatchling, requires-python >=3.14
+    ├── boukensha/
+    │   ├── __init__.py
+    │   ├── config.py                      # Config class, .yaml/.yml fallback fix
+    │   └── tasks/
+    │       ├── __init__.py
+    │       ├── base.py                    # Base (classmethods, mirrors Ruby)
+    │       └── player.py                  # Player(Base)
+    ├── prompts/
+    │   └── system.md                      # duplicated from Ruby's copy
+    └── examples/
+        └── example.py                     # 1:1 port of example.rb, no pytest suite
+```
+
+## Behavior mapping
+
+- **Config dir resolution** — `BOUKENSHA_DIR` env var, else `~/.boukensha`. Same in Python via `os.environ.get` + `pathlib.Path.home()`.
+- **`.env` loading** — Ruby uses the `dotenv` gem; Python uses `python-dotenv` (`dotenv.load_dotenv`).
+- **`settings.yaml` loading** — Ruby uses `YAML.safe_load`; Python uses `PyYAML`'s `yaml.safe_load`. Missing file → `{}`, same as Ruby.
+- **`Config#tasks(name)`** — dict lookup by task name; Ruby has to check both string and symbol keys because `YAML.safe_load` can return either — Python's `yaml.safe_load` only ever produces `str` keys, so that dual lookup collapses to a single `dict.get`.
+- **`Config#dig(*keys)`** — same simplification: no string/symbol duality needed in Python.
+- **`mud_host` / `mud_port` / `mud_username` / `mud_password`** — same defaults (`localhost` / `4000`).
+- **`Tasks::Base`** — Ruby models this as a class with only class methods (never instantiated) operating on a passed-in `settings` dict, so subclasses don't carry state. Python equivalent: a class with `@classmethod`s (or plain module-level functions taking `settings` + a `task_name` constant) — see open question below on which idiom to use.
+  - `.task_name` → `NotImplementedError` in the abstract base, overridden by subclasses.
+  - `.provider(settings)` / `.model(settings)` → raise `ValueError` if missing (Ruby raises `ArgumentError`).
+  - `.prompt_override?(settings, prompt=:system)` → `.prompt_override(settings, prompt="system")` (Python has no `?` methods; drop the suffix or rename to `is_prompt_override`).
+  - `.prompt` / `.system_prompt` — same resolution order: user override (if enabled and file exists) → default prompt file.
+  - Private helpers `fetch`, `read_user_prompt`, `read_default_prompt`, `read_file` → module-private functions (leading underscore) or `@staticmethod`s.
+- **`Tasks::Player`** — trivial subclass, `task_name = "player"`.
+- **`examples/example.py`** — same smoke test output as `example.rb` (see expected output block in the Ruby README), reading `BOUKENSHA_DIR` fallback to repo-root `.boukensha` the same way (mind the path-depth bug we just fixed in `example.rb` for the extra `ruby/` nesting — the Python file will need its own correct relative depth from `python/00_config/examples/`).
+
+## Config schema
+
+Unchanged — same YAML shape as documented in the Ruby README:
+
+```yaml
+tasks:
+  player:
+    provider: anthropic
+    model: claude-haiku-4-5
+    prompt_override:
+      system: true
+mud:
+  host: localhost
+  port: 4000
+  username: dummy
+  password: helloworld
+```
+
+## Dependencies (proposed)
+
+`pyproject.toml` via `uv`, matching the `circlemud-world-parser` convention:
+
+```toml
+[project]
+name = "boukensha"
+requires-python = ">=3.14"
+dependencies = [
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
+```
+
+## Running it — language-aware `bin/00_config`
+
+Rather than a separate Python bin script, `week1_baseline/bin/00_config` becomes
+language-aware: it picks Ruby or Python based on a flag/env var, defaulting to
+one of them (TBD which — suggest Ruby stays default since it's the established
+baseline, Python opts in via `--python` / `BOUKENSHA_LANG=python`). Sketch:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+lang="${BOUKENSHA_LANG:-ruby}"
+[[ "${1:-}" == "--python" ]] && lang="python"
+
+case "$lang" in
+  ruby)
+    cd "$(dirname "$0")/../ruby/00_config"
+    bundle exec ruby examples/example.rb
+    ;;
+  python)
+    cd "$(dirname "$0")/../python/00_config"
+    uv run python examples/example.py
+    ;;
+  *)
+    echo "unknown BOUKENSHA_LANG: $lang" >&2; exit 1 ;;
+esac
+```
+
+## `.yaml` / `.yml` fix
+
+The Python port fixes the extension bug noted in the Ruby README's
+"Considerations" section: `Config` will look for `settings.yaml` first, then
+fall back to `settings.yml`, instead of hardcoding `.yaml` only. (This is a
+Python-port-only fix — the Ruby side keeps its current hardcoded-`.yaml`
+behavior unless/until a separate change addresses it there too.)
+
+## Tests
+
+No `pytest` suite for this port — matches the Ruby side, which only has the
+`examples/example.py` smoke test (1:1 port of `example.rb`'s behavior and
+printed output).
+
+---
+
+## Decisions
+
+1. **Bin script** — language-aware, see above. ✅
+2. **`.yaml`/`.yml` bug** — fixed in the Python port only. ✅
+3. **Tests** — none; smoke-test script only, matching Ruby. ✅
+4. **`Tasks::Base` idiom** — proposed default (not firmly decided, flag if you'd rather go the other way): keep it a class hierarchy with `@classmethod`s (`Base` → `Player`), mirroring Ruby's shape 1:1. This preserves the inheritance point where future task types (post-`00_config`) plug in the same way they do on the Ruby side, and keeps the two ports structurally comparable. The plain-module-functions alternative is more idiomatic Python for stateless behavior but would diverge from Ruby's shape — happy to switch if you'd prefer that instead.
+5. **Python version floor** — `>=3.14`, matching `circlemud-world-parser`. ✅
+6. **Prompts directory** — duplicated under `python/00_config/prompts/system.md` (not shared with the Ruby copy). ✅
+7. **Scope** — stays limited to porting `00_config` only, matching where the Ruby side currently is; not getting ahead of future Ruby iterations. ✅

@@ -1,4 +1,20 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-cd "$(dirname "$0")/../ruby/00_config"
-bundle exec ruby examples/example.rb
+lang="${BOUKENSHA_LANG:-ruby}"
+[[ "${1:-}" == "--python" ]] && lang="python"
+
+case "$lang" in
+  ruby)
+    cd "$(dirname "$0")/../ruby/00_config"
+    bundle exec ruby examples/example.rb
+    ;;
+  python)
+    cd "$(dirname "$0")/../python/00_config"
+    uv run python examples/example.py
+    ;;
+  *)
+    echo "unknown BOUKENSHA_LANG: $lang" >&2
+    exit 1
+    ;;
+esac

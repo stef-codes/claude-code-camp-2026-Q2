@@ -1,0 +1,168 @@
+# Python Port Plan · 01 · Struct Skeleton
+
+## Context
+
+This step doesn't exist in your repo yet on either side. The Ruby source
+lives upstream on the template repo you started from
+(`omenking/claude-code-camp-2026-Q2`, branch `week_2`,
+`week1_baseline/ruby/01_struct_skeleton/`) — your `origin` only points at
+`stef-codes/claude-code-camp-2026-Q2`, which doesn't have this branch. This
+plan therefore has two phases: **(0)** pull the Ruby source in unmodified,
+**(1)** port it to Python, following the same conventions established for
+[`00_config`](00_config).
+
+`01_struct_skeleton` defines the three core data structures the agent passes
+around on every turn: `Tool`, `Message`, `Context`. Ruby implements them as
+`Struct`s for brevity; nothing behavioral changes from `00_config` otherwise
+— `Config`/`Tasks::Base`/`Tasks::Player` are carried forward (with one small
+regression vs. `00_config`: this version's `config.rb` drops the
+`PROMPTS_DIR` constant, so there's no default-prompt fallback — the example
+only reads a user override).
+
+## Phase 0 — pull in the Ruby source
+
+Copy these files verbatim into `week1_baseline/ruby/01_struct_skeleton/`
+(no `origin` remote change needed — fetch via `gh api`/raw GitHub URLs, not
+`git remote add`, since we only need a one-time snapshot):
+
+- `Gemfile`, `Gemfile.lock`, `README.md`
+- `lib/boukensha.rb`
+- `lib/boukensha/config.rb`, `context.rb`, `message.rb`, `tool.rb`
+- `lib/boukensha/tasks/base.rb`, `tasks/player.rb`
+- `examples/example.rb`
+
+Source: https://github.com/omenking/claude-code-camp-2026-Q2/tree/week_2/week1_baseline/ruby/01_struct_skeleton
+
+No `prompts/` directory in this step (confirmed absent upstream) — the
+example only resolves a user-prompt override, no shipped default.
+
+## Phase 1 — target file layout (Python)
+
+```
+week1_baseline/
+├── bin/
+│   ├── 01_struct_skeleton                 # NEW — language-aware dispatcher, same pattern as bin/00_config
+│   └── python/
+│       └── 01_struct_skeleton             # NEW — cd's into python/01_struct_skeleton, uv run
+│
+├── ruby/01_struct_skeleton/                # NEW — Phase 0, unmodified upstream copy
+│
+└── python/01_struct_skeleton/              # NEW
+    ├── pyproject.toml                      # uv + hatchling, requires-python >=3.14 (same as 00_config)
+    ├── boukensha/
+    │   ├── __init__.py                     # exports Config, Player, Tool, Message, Context
+    │   ├── config.py                       # ported from ruby/01_struct_skeleton's config.rb (no PROMPTS_DIR — see below)
+    │   ├── tool.py                         # Tool dataclass
+    │   ├── message.py                      # Message dataclass
+    │   ├── context.py                      # Context class
+    │   └── tasks/
+    │       ├── __init__.py
+    │       ├── base.py                     # unchanged from 00_config's port — Ruby source is identical
+    │       └── player.py                   # unchanged from 00_config's port
+    └── examples/
+        └── example.py
+```
+
+## Behavior mapping
+
+**`Tool`** (`Struct.new(:name, :description, :parameters, :block)`) →
+
+```python
+@dataclass
+class Tool:
+    name: str
+    description: str
+    parameters: dict
+    block: Callable
+
+    def __repr__(self) -> str:
+        return f"#<Tool name={self.name} description={self.description[:40]} params={list(self.parameters.keys())}>"
+```
+
+**`Message`** (`Struct.new(:role, :content, :tool_use_id)`) →
+
+```python
+@dataclass
+class Message:
+    role: str
+    content: str
+    tool_use_id: str | None = None
+
+    def __repr__(self) -> str:
+        id_tag = f" [{self.tool_use_id}]" if self.tool_use_id else ""
+        return f"#<Message role={self.role}{id_tag} content={self.content[:60]}...>"
+```
+
+**`Context`** (plain Ruby class, not a Struct — it has real behavior) →
+
+```python
+class Context:
+    def __init__(self, task, system: str | None = None):
+        self.task = task
+        self.system = system
+        self.messages: list[Message] = []
+        self.tools: dict[str, Tool] = {}
+
+    def register_tool(self, tool: Tool) -> None:
+        self.tools[tool.name] = tool
+
+    def add_message(self, role: str, content: str, tool_use_id: str | None = None) -> None:
+        self.messages.append(Message(role, content, tool_use_id))
+
+    @property
+    def tool_count(self) -> int:
+        return len(self.tools)
+
+    @property
+    def turn_count(self) -> int:
+        return len(self.messages)
+
+    def __repr__(self) -> str:
+        task_name = self.task.task_name() if self.task else None
+        return f"#<Context task={task_name} turns={self.turn_count} tools={self.tool_count}>"
+```
+
+Note: Ruby's `task&.task_name` is a *method call* (`Tasks::Player.task_name`,
+a classmethod on the task class itself, not an instance) — `Context#task`
+holds the class, not an instance. Python mirrors this: `self.task` is
+expected to be a `Base` subclass (e.g. `Player`), and `self.task.task_name()`
+calls the classmethod.
+
+**`Config` / `Tasks::Base` / `Tasks::Player`** — same port as `00_config`,
+with one deviation to match this Ruby version exactly: **no `PROMPTS_DIR`
+constant** (this `config.rb` doesn't define one). `tasks/base.py` and
+`tasks/player.py` are unchanged from the `00_config` port — the Ruby source
+is byte-identical between the two steps, so copy them over as-is.
+
+Standing decisions carried forward from `00_config` (not re-litigated here):
+`uv`/hatchling, `requires-python >=3.14`, `.yaml`/`.yml` fallback fix
+(Python-side only), no pytest suite, language-aware `bin/` dispatcher.
+
+## `examples/example.py`
+
+Mirrors `example.rb`: build `Config`, resolve `player_settings =
+config.tasks("player")`, resolve `system_prompt = Player.system_prompt(player_settings, user_prompts_dir=config.user_prompts_dir)`
+(no `default_prompts_dir` — matches the missing `PROMPTS_DIR`), construct
+`Context(task=Player, system=system_prompt)`, register a `"move"` tool with
+a lambda block (`lambda direction: f"You move {direction} into a torch-lit
+corridor."`), add a user + assistant message, then print the same lines as
+Ruby (`Config`, `Context`, the registered tool, each message).
+
+## Running it
+
+```sh
+./week1_baseline/bin/01_struct_skeleton --python
+# or
+./week1_baseline/bin/python/01_struct_skeleton
+```
+
+`bin/01_struct_skeleton` follows the exact dispatcher pattern already in
+[`bin/00_config`](../../../week1_baseline/bin/00_config).
+
+## Open question
+
+You created `bin/ruby/` and `bin/python/` subfolders but only asked for a
+Python script under `00_config` so far — should this step also get a
+`bin/ruby/01_struct_skeleton` wrapper (cd's into `ruby/01_struct_skeleton`,
+`bundle exec`), or leave `bin/ruby/` empty for now and rely on the top-level
+`bin/01_struct_skeleton` dispatcher for the Ruby path too?
