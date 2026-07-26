@@ -32,6 +32,10 @@ It will have poor perception without memory or decision making.
 - Ruby and python
 
 
+My study plan: https://syllabi-green.vercel.app/
+
+
+
 
 
 
