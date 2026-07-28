@@ -116,22 +116,78 @@ BOUKENSHA_LANG=python ./week1_baseline/bin/<step-name>
 ```
 
 Steps 7+ support the REPL/TUI directly; `--no-tui` falls back to a plain
-terminal REPL for step 11+. Steps 9+ install as a `boukensha` executable
-(`uv tool install .` inside that step's directory) and have a pytest
-suite (`uv run pytest`).
+terminal REPL for step 11+. Steps 9+ have a pytest suite (`uv run pytest`).
 
-All steps read config from `.boukensha/` at the repo root by default
-(`BOUKENSHA_DIR` env var overrides this). That directory holds `.env`
-(API keys — currently a placeholder, not a real key), `settings.yaml`,
-and `prompts/`.
+### The global `boukensha` command (installed)
+
+`boukensha` is installed globally as an **editable** install of step 12:
+```bash
+uv tool install --editable ./week1_baseline/python/12_context
+```
+Because it's editable, the tool venv imports straight from
+`week1_baseline/python/12_context/` — any source edit there is reflected the
+next time you run `boukensha`, no reinstall needed. To rebuild anyway (e.g.
+after changing dependencies): `uv tool install --editable --reinstall …`.
+To switch the global command to a different step, reinstall from that step's
+dir, or set `BOUKENSHA_PATH` / `boukensha_path:` in `~/.boukensharc`.
+
+The executable lives in uv's tool bin dir (`uv tool dir --bin` →
+`~/.local/bin`). `uv tool update-shell` added that dir to PATH via a
+generated `~/.zshenv` — if `boukensha` ever reports "not found", that's the
+first thing to check. The non-idiomatic
+`packages = ["boukensha", "boukensha_loader.py"]` in the step pyproject
+builds fine under hatchling (verified), so no `force-include` workaround was
+needed.
+
+### Config-directory resolution (a common "why won't it run" trap)
+
+The runtime config dir (`.env`, `settings.yaml`, `prompts/`) lives at the
+**repo root** `.boukensha/`. Steps 9–12 resolve it in this order:
+`BOUKENSHA_DIR` env var → `boukensha_dir:` in `~/.boukensharc` →
+`~/.boukensha` (which does **not** exist on this machine).
+
+The `bin/python/NN` wrappers `cd` into the step directory before launching,
+so a bare `./week1_baseline/bin/python/12_context` will NOT find the
+repo-root config on its own and dies with `tasks.player.model is required`.
+Two fixes are in place / available:
+- `~/.boukensharc` **is set up** with
+  `boukensha_dir: /Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha`,
+  so the wrappers now work with no env var. If it goes missing, recreate it.
+- Or prefix any run with `BOUKENSHA_DIR="$(pwd)/.boukensha"` from the repo
+  root.
+
+Note the placeholder `~/Sites/...` paths in some step READMEs are
+illustrative, not literal for this machine. `boukensha` **is** now on `$PATH`
+(editable install of step 12 — see the global-command section above); you can
+also launch any step through its `bin/` wrapper.
+
+## MUD tool — wired up and working
+
+The agent can now play the MUD. `week0_explore/mud_manager/` was synced from
+upstream `main` (it had been a stripped copy — only `session.rb` +
+`primitives.rb`; the full MCP daemon under `bin/mud-manager` +
+`lib/mud_manager/mcp/*` + `fake_mud.rb` + tests is now present). It's
+stdlib-only Ruby; `bin/mud-manager` self-bootstraps its `$LOAD_PATH`, so no
+`gem install`/`bundle` is needed.
+
+`.boukensha/settings.yaml` now has an `mcp_servers: mud:` block that spawns
+`ruby …/mud-manager --mcp` and registers its **26 tools** under the `tbamud`
+prefix. Verified end to end: the global `boukensha` shows `servers: mud (26)`
+and the agent autonomously calls `tbamud__look` etc. — it logged in as the
+`dummy`/`helloworld` character (a real char on the running MUD) and described
+the starting room ("The Cozy Bakery"). Cross-language works because MCP is a
+stdio JSON-RPC protocol: Python agent spawns the Ruby daemon, no binding.
+
+A future Python port of the daemon is optional (Phase 2 in the plan file) —
+not needed for correctness.
 
 ## Known limitations in this environment
 
-- **The real `mud-manager` binary is absent** (`week0_explore/mud_manager`
-  doesn't have it built in this checkout). Any test or demo that needs a
-  live MCP MUD server skips gracefully rather than failing — this is
-  expected, not a regression. Affects steps 10, 11, 12 (10 pass / 12 skip
-  is the normal pytest result for each).
+- Since the `mud-manager` binary is now present, the step 10–12 Python
+  pytest tests that used to **skip** on its absence
+  (`test/helper.py::mud_manager_available`) may now execute instead — I
+  haven't re-run the full suites since the sync, so don't assume "12 skip"
+  is still the baseline there.
 - **Ruby can't actually run for steps 11 and 12** in this environment —
   the `charm` gem family (bubbletea, lipgloss, bubbles, etc.) was never
   `bundle install`ed and requires a Go toolchain to build natively, which
@@ -140,9 +196,10 @@ and `prompts/`.
   `lib/boukensha.rb` top-level require chain that pulls in `tui.rb`) —
   see how `Config`/`Context`/`Models` were cross-checked this way if you
   need to do it again.
-- The configured `ANTHROPIC_API_KEY` in `.boukensha/.env` is not a real
-  credential — every live-API check in this repo relies on getting a
-  `401` at exactly the right point, not on a successful completion.
+- The `ANTHROPIC_API_KEY` in `.boukensha/.env` is now a **working** key
+  (verified: live agent turns succeed — `PONG` test + real MUD play). Earlier
+  in the project history it was a placeholder that 401'd, so older notes that
+  say "every live call 401s" are stale.
 
 ## Documentation debt / things worth knowing
 

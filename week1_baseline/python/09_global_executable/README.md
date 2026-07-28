@@ -18,16 +18,27 @@ executable.
 ## Install
 
 ```bash
-cd week1_baseline/python/09_global_executable
-uv tool install .
+uv tool install ./week1_baseline/python/09_global_executable          # pinned snapshot
+# or, so the command tracks your live source (recommended while developing):
+uv tool install --editable ./week1_baseline/python/09_global_executable
 ```
 
-After that, `boukensha` is on your `$PATH` and works from any directory. Or,
-without installing, run it directly via `uv run`:
+`uv tool install` drops the `boukensha` executable in uv's tool bin
+directory (`uv tool dir --bin`, usually `~/.local/bin`). If that directory
+isn't on your `$PATH`, the command will still be "not found" — run
+`uv tool update-shell` once and restart your shell to fix that. After that,
+`boukensha` works from any directory. Or, without installing, run it
+directly via `uv run`:
 
 ```bash
 uv run --project week1_baseline/python/09_global_executable boukensha
 ```
+
+> In this repo the runtime config lives at the **repo-root** `.boukensha/`,
+> not `~/.boukensha`. Point the installed command at it with a one-time
+> `~/.boukensharc` (`boukensha_dir: /abs/path/to/repo/.boukensha`) or a
+> per-run `BOUKENSHA_DIR=...`, otherwise you'll hit
+> `tasks.player.model is required`. See `boukensha_dir` below.
 
 ## Configuring the global executable
 

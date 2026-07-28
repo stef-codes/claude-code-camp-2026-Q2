@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -E 's/\\(=.{0,6}\\).*/\\\\1…\\(hidden\\)/' .boukensha/.env)",
+      "Bash(awk -F= '/ANTHROPIC_API_KEY/{print \"key present, value length: \" length\\($2\\)}' .boukensha/.env)",
+      "Bash(BOUKENSHA_DIR=__CMDSUB_OUTPUT__/.boukensha uv run --project week1_baseline/python/12_context python week1_baseline/python/12_context/examples/example.py)",
+      "Bash(~/.local/bin/boukensha --no-tui)",
+      "Bash(gh api *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); tools=d if isinstance\\(d,list\\) else d.get\\('tools',d\\); names=[t.get\\('name'\\) for t in tools] if isinstance\\(tools,list\\) else list\\(tools.keys\\(\\)\\); print\\(len\\(names\\),'tools:'\\); print\\(', '.join\\(str\\(n\\) for n in names\\)\\)\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(rsync -a --delete --exclude=.git /private/tmp/claude-501/-Users-stefanie-code-claude-code-camp-2026-Q2/bd00863c-d6f1-4531-9bb8-4987b1e5bedb/scratchpad/upstream_sync/week0_explore/mud_manager/ /Users/stefanie/code/claude-code-camp-2026-Q2/week0_explore/mud_manager/)",
+      "Bash(cd /Users/stefanie/code/claude-code-camp-2026-Q2 *)"
+    ],
+    "additionalDirectories": [
+      "/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha/sessions"
+    ]
+  }
+}

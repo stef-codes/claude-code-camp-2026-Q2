@@ -111,12 +111,19 @@ carried over unchanged — it doesn't exercise the TUI).
 # Offline, no API key, no live MUD — uses the daemon's built-in fake MUD:
 uv run python examples/mcp_mud_demo.py --dry
 
-# launches the Textual TUI:
-BOUKENSHA_DIR=~/.boukensha BOUKENSHA_PATH=~/path/to/week1_baseline/python/11_tui ./week1_baseline/bin/python/11_tui
+# launch the Textual TUI via the wrapper (it already knows its own step
+# path, so no BOUKENSHA_PATH is needed):
+./week1_baseline/bin/python/11_tui
 
 # plain REPL (no textual dependency exercised at runtime):
 ./week1_baseline/bin/python/11_tui --no-tui
 ```
+
+The launcher finds its config directory via `BOUKENSHA_DIR`, then
+`boukensha_dir` in `~/.boukensharc`, then `~/.boukensha`. In this repo the
+config lives at the **repo-root** `.boukensha/` (there is no `~/.boukensha`),
+so either set `~/.boukensharc` once (`boukensha_dir: /abs/path/to/repo/.boukensha`)
+or prefix each run with `BOUKENSHA_DIR="$(pwd)/.boukensha"` from the repo root.
 
 ## Tests
 

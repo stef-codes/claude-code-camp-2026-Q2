@@ -9,3 +9,20 @@ mud:
   port: 4000
   username: dummy
   password: helloworld
+
+# Tools for the agent come from MCP servers listed here (boukensha ships none
+# of its own). The `mud` server is the Ruby mud-manager daemon spawned over
+# stdio; its 26 CircleMUD tools register as tbamud__look, tbamud__move, etc.
+# Credentials resolve from the `mud:` block above (via the daemon's config),
+# so no MUD_* env is needed here — but see note below if login fails.
+mcp_servers:
+  mud:
+    command: ruby
+    args:
+      - /Users/stefanie/code/claude-code-camp-2026-Q2/week0_explore/mud_manager/bin/mud-manager
+      - --mcp
+    prefix: tbamud
+    required: false   # lazy connect; a cred/login issue must not block the REPL
+    # env:            # uncomment to override the `mud:` block with a real char
+    #   MUD_NAME: YourCharacter
+    #   MUD_PASSWORD: yourpassword
