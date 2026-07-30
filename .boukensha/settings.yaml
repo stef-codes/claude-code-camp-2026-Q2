@@ -10,6 +10,20 @@ mud:
   username: dummy
   password: helloworld
 
+# Tracing. Secrets and the OTLP endpoint live in .boukensha/.env (gitignored).
+# Contract is pinned to OpenTelemetry GenAI semantic conventions 1.37.0 --
+# see week2_capable/observability/README.md before changing attributes.
+observability:
+  otel:
+    enabled: true
+    # OFF deliberately: with capture_content false only metadata leaves the
+    # machine (model, provider, token counts, latency, span/tool names). Turn
+    # it on and full prompts + MUD transcripts ship to Langfuse Cloud. It also
+    # will NOT populate Langfuse's input/output panes on its own -- boukensha
+    # writes content to span *events*, and Langfuse reads span *attributes*.
+    capture_content: false
+    content_max_bytes: 4096
+
 # Tools for the agent come from MCP servers listed here (boukensha ships none
 # of its own). The `mud` server is the Ruby mud-manager daemon spawned over
 # stdio; its 26 CircleMUD tools register as tbamud__look, tbamud__move, etc.
