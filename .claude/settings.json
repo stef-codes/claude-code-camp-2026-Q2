@@ -52,7 +52,15 @@
       "Bash(curl -s http://localhost:3000/api/v1/world/overlay -H 'Cookie: mud_monitor_profile=legacy')",
       "Bash(curl -s http://localhost:3000/api/v1/world/overlay -H 'Cookie: mud_monitor_profile=legacy' -o /private/tmp/claude-501/-Users-stefanie-code-claude-code-camp-2026-Q2/72dae30a-c016-4b4f-b168-1fb0c06a7bc6/scratchpad/live_overlay.json -w \"HTTP %{http_code}  %{size_download} bytes  %{time_total}s\\\\n\")",
       "Bash(curl -s http://localhost:3000/api/v1/world/overlay -H 'Cookie: mud_monitor_profile=legacy' -o /dev/null -w \"HTTP %{http_code}  %{time_total}s\\\\n\")",
-      "Bash(curl -s -o /dev/null -w \"vite 5173: HTTP %{http_code}\\\\n\" http://localhost:5173/)"
+      "Bash(curl -s -o /dev/null -w \"vite 5173: HTTP %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(BOUKENSHA_DIR=/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha bundle exec ruby bin/boukensha --profile dummy --no-tui)",
+      "Bash(sqlite3 .boukensha/profiles/dummy/knowledge.sqlite3 \"select id,name,visit_count,surveyed_at is not null as surveyed from rooms;\")",
+      "Bash(sqlite3 .boukensha/profiles/dummy/knowledge.sqlite3 \"select room_id,direction,target_room_id,traversals from room_exits;\")",
+      "Bash(sqlite3 .boukensha/profiles/dummy/knowledge.sqlite3 \"select current_room_id,hp,level from player_state;\")",
+      "Bash(curl -s http://localhost:3000/api/v1/profiles)",
+      "Bash(curl -s http://localhost:3000/api/v1/knowledge -H 'Cookie: mud_monitor_profile=dummy')",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('attached:',d.get\\('attached'\\),'profile:',d.get\\('profile'\\),'rooms:',d.get\\('stats',{}\\).get\\('rooms'\\),'player room:',\\(d.get\\('player'\\) or {}\\).get\\('current_room'\\)\\)\")",
+      "Bash(curl -s http://localhost:3000/api/v1/world/overlay -H 'Cookie: mud_monitor_profile=dummy')"
     ],
     "additionalDirectories": [
       "/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha/sessions",
