@@ -258,6 +258,39 @@ module Boukensha
           row(@db.execute("SELECT * FROM rooms WHERE id = ?", [id]).first)
         end
 
+        # Rooms whose name matches exactly. Backed by `idx_rooms_name`, which is
+        # NOT `COLLATE NOCASE` — so this exact-case form is the only one that
+        # uses the index, and it is the fast path a destination lookup takes
+        # first. Returns MANY: names are not unique, and `provisional` rooms mean
+        # the same physical place can legitimately be several rows. Confirmed
+        # rows sort first so a caller taking `.first` gets the better one.
+        def rooms_by_name(name)
+          return [] if name.to_s.strip.empty?
+
+          @db.execute(
+            "SELECT * FROM rooms WHERE name = ? " \
+            "ORDER BY CASE confidence WHEN 'provisional' THEN 1 ELSE 0 END, id",
+            [name.to_s]
+          ).map { |r| row(r) }
+        end
+
+        # Substring search, for "did you mean" suggestions and for a destination
+        # the caller half-remembered ("bakery" → "The Cozy Bakery"). A table scan
+        # by construction — `LIKE '%x%'` cannot use `idx_rooms_name` — which is
+        # fine against the hundreds of rooms an agent actually walks. If this
+        # ever needs to serve the full ~12.7k-room world, the answer is an FTS5
+        # virtual table over `name || ' ' || description` (FTS5 is compiled into
+        # the SQLite this ships against), not a bigger index.
+        def search_rooms(term, limit: 5)
+          return [] if term.to_s.strip.empty?
+
+          @db.execute(
+            "SELECT * FROM rooms WHERE name LIKE ? " \
+            "ORDER BY CASE confidence WHEN 'provisional' THEN 1 ELSE 0 END, length(name), id LIMIT ?",
+            ["%#{term.to_s.strip}%", limit.to_i]
+          ).map { |r| row(r) }
+        end
+
         def create_room(name:, description:, weak_fingerprint:, strong_fingerprint: nil,
                         look_candidates: nil, confidence: "confirmed", surveyed: false)
           t = now
@@ -295,6 +328,33 @@ module Boukensha
 
         def exits_for(room_id)
           @db.execute("SELECT * FROM room_exits WHERE room_id = ? ORDER BY direction", [room_id]).map { |r| row(r) }
+        end
+
+        # THE WHOLE WALKABLE GRAPH, in one statement.
+        #
+        # Deliberately not `exits_for` in a loop: `CountingDb` counts every
+        # `execute`, so a per-node BFS would make `db_reads` scale with the map
+        # and drown the counter that exists to price the agent's real work. One
+        # query, one increment, regardless of graph size.
+        #
+        # Only linked edges: a NULL `target_room_id` is the frontier — an exit we
+        # know exists but have never walked — and there is nothing to route
+        # through. Callers wanting the frontier ask for it by name.
+        def linked_exits
+          @db.execute(
+            "SELECT room_id, direction, target_room_id FROM room_exits " \
+            "WHERE target_room_id IS NOT NULL ORDER BY room_id, direction"
+          ).map { |r| row(r) }
+        end
+
+        # The unwalked edges leading out of one room. Backed by the partial index
+        # `idx_exits_frontier`. This is what turns "I cannot route you there"
+        # into "…but here is where the map runs out".
+        def frontier_exits_for(room_id)
+          @db.execute(
+            "SELECT * FROM room_exits WHERE room_id = ? AND target_room_id IS NULL ORDER BY direction",
+            [room_id]
+          ).map { |r| row(r) }
         end
 
         def exit_at(room_id, direction)
