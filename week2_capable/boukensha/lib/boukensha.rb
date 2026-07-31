@@ -478,6 +478,7 @@ require_relative "boukensha/tools/mcp"
 # being a tool the model has to remember to call.
 require_relative "boukensha/mud/room_parser"
 require_relative "boukensha/mud/room_survey"
+require_relative "boukensha/mud/route_finder"
 require_relative "boukensha/mud/state_block"
 require_relative "boukensha/mud/hooks"
 require_relative "boukensha/mud/memory/fingerprint"
