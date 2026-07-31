@@ -411,7 +411,21 @@ module Boukensha
     perms.validate_referenced!(registry.tool_names)
 
     lambda do |name, args = {}|
-      body = lambda do
+      # The optional parameter is load-bearing. This lambda is used two ways
+      # below: called directly with no arguments when there is no logger, and
+      # passed as a BLOCK to Logger#operation when there is — and that method
+      # does `yield frame`, with one argument. A lambda enforces its arity even
+      # when it is used as a block, so a zero-parameter one raises
+      #
+      #   ArgumentError: wrong number of arguments (given 1, expected 0)
+      #
+      # on every logger-backed call. Hooks#guard swallows it, so the symptom is
+      # not a crash: it is the room survey, the cold `look`, the score refresh
+      # and the position tracking all silently doing nothing, in exactly the
+      # configuration a real REPL runs in. Tests and scripts that build a
+      # dispatcher without a logger take the other branch and pass, which is why
+      # this survived a full suite and a live end-to-end run.
+      body = lambda do |_frame = nil|
         call_id = logger&.tool_call(name: name, args: args, initiator: initiator)
         # Monotonic, so the figure survives an NTP step mid-call.
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
