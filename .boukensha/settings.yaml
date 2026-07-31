@@ -5,6 +5,59 @@ tasks:
     model: claude-haiku-4-5
     prompt_override:
       system: true
+    # WITHOUT THIS BLOCK THE AGENT HAS NO TOOLS AT ALL.
+    #
+    # Boukensha.task_permissions (boukensha.rb:446-450) is default-deny exactly
+    # like the composites' block further down: a task with no `allow:` gets
+    # Permissions.deny_all, every MCP tool is refused registration, and the
+    # header prints `servers: mud (0)`. The model is then handed a MUD it cannot
+    # touch, and — having no tools — answers by explaining that it is unable to
+    # connect to external game servers. Which reads like a model problem and is
+    # a config one.
+    #
+    # Names may be bare here; a bare name matches whatever MCP prefix the tool
+    # ends up with, so `move` covers `tbamud__move`. Every rule is validated at
+    # startup against the tool's own schema, so a typo aborts the REPL instead
+    # of quietly narrowing the agent.
+    #
+    # `look` is deliberately ABSENT. It belongs to the room survey, which runs
+    # under its own allowlist below and only for a room the agent has never
+    # stood in; leaving it here would let the model re-derive rooms it has
+    # already been told about, which is the exact cost the memory layer exists
+    # to remove (see the long note in boukensha_loader.rb).
+    #
+    # `send_raw` is also absent, and that one is a judgement call you may want
+    # to reverse. It is an escape hatch that sends an arbitrary command string,
+    # so it can reach `look`, and it steps around `move`'s direction enum and
+    # therefore around the turn policy. Grant it and the value-level half of
+    # this allowlist stops meaning much. Add `- send_raw` if you would rather
+    # have the escape hatch than the guarantee.
+    allow:
+      - navigate                 # native: walk a route the agent already knows
+      - "move(direction: north|east|south|west|up|down)"
+      - examine
+      - consider
+      - "check(kind: score|inventory|equipment|gold|exits|time|weather|levels|wimpy|toggle|where)"
+      - poll
+      - mud_status
+      - "set_position(position: stand|sit|rest|sleep|wake)"
+      - track
+      - "attack(style: hit|murder|kill)"
+      - "skill_strike(skill: backstab|bash|kick|rescue|assist)"
+      - flee
+      - "say(mode: say|emote|reply)"
+      - "tell(mode: tell|whisper|ask)"
+      - "channel_say(channel: shout|gossip|auction|grats|holler)"
+      - get_item
+      - "drop_item(mode: drop|donate|junk)"
+      - put_item
+      - "equip_item(action: wear|wield|grab|hold|remove)"
+      - "consume_item(mode: eat|taste|drink|sip)"
+      - cast_spell
+      - "use_magic_item(mode: use|quaff|recite)"
+      - "shop(action: buy|sell|list|value|offer)"
+      - practice
+      - save_character
 mud:
   host: localhost
   port: 4000
