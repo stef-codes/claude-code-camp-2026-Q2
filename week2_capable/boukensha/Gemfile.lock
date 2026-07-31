@@ -19,9 +19,12 @@ GEM
       lipgloss
     bubbletea (0.1.4)
       lipgloss (~> 0.1)
+    bubbletea (0.1.4-arm64-darwin)
+      lipgloss (~> 0.1)
     bubbletea (0.1.4-x86_64-linux-gnu)
       lipgloss (~> 0.1)
     bubblezone (0.1.2)
+    bubblezone (0.1.2-arm64-darwin)
     bubblezone (0.1.2-x86_64-linux-gnu)
     charm (0.1.0)
       bubbles
@@ -35,10 +38,15 @@ GEM
     dotenv (3.2.0)
     drb (2.2.3)
     ffi (1.17.4)
+    ffi (1.17.4-arm64-darwin)
     ffi (1.17.4-x86_64-linux-gnu)
     glamour (0.2.2)
+    glamour (0.2.2-arm64-darwin)
     glamour (0.2.2-x86_64-linux-gnu)
     google-protobuf (4.35.1)
+      bigdecimal
+      rake (~> 13.3)
+    google-protobuf (4.35.1-arm64-darwin)
       bigdecimal
       rake (~> 13.3)
     google-protobuf (4.35.1-x86_64-linux-gnu)
@@ -47,9 +55,11 @@ GEM
     googleapis-common-protos-types (1.23.0)
       google-protobuf (~> 4.26)
     gum (0.3.2)
+    gum (0.3.2-arm64-darwin)
     gum (0.3.2-x86_64-linux)
     harmonica (0.1.1)
     lipgloss (0.2.2)
+    lipgloss (0.2.2-arm64-darwin)
     lipgloss (0.2.2-x86_64-linux-gnu)
     logger (1.7.0)
     mini_portile2 (2.8.9)
@@ -57,8 +67,11 @@ GEM
       drb (~> 2.0)
       prism (~> 1.5)
     ntcharts (0.1.2)
+    ntcharts (0.1.2-arm64-darwin)
     ntcharts (0.1.2-x86_64-linux-gnu)
     onnxruntime (0.11.4)
+      ffi
+    onnxruntime (0.11.4-arm64-darwin)
       ffi
     onnxruntime (0.11.4-x86_64-linux)
       ffi
@@ -87,9 +100,11 @@ GEM
     rake (13.4.2)
     sqlite3 (2.9.5)
       mini_portile2 (~> 2.8.0)
+    sqlite3 (2.9.5-arm64-darwin)
     sqlite3 (2.9.5-x86_64-linux-gnu)
 
 PLATFORMS
+  arm64-darwin
   ruby
   x86_64-linux
 
@@ -100,4 +115,4 @@ DEPENDENCIES
   minitest
 
 BUNDLED WITH
-   2.5.19
+  4.0.16
