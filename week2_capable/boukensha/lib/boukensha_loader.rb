@@ -266,11 +266,21 @@ module BoukenshaLoader
                "names the unexplored exits nearest you instead. Each step is a real " \
                "move, so a blocked door or a dark room stops the walk partway and the " \
                "reply says where you were left standing.",
+             # `type` and `description` ONLY. Backends::Anthropic#to_tools drops
+             # this hash straight into the schema's `properties` and derives
+             # `required` from its key list, so an extra `required: true` here
+             # becomes a property named "required" with a boolean value — and in
+             # JSON Schema draft 2020-12 `required` must be an array of strings.
+             # The whole request is then rejected:
+             #
+             #   400 tools.24.custom.input_schema: JSON schema is invalid
+             #
+             # which kills every turn, not just this tool. Match what
+             # Tools::Mcp.to_boukensha_params emits and nothing else.
              parameters: {
                destination: {
                  type: "string",
-                 description: "The room name (or numeric room id) to walk to.",
-                 required: true
+                 description: "The room name (or numeric room id) to walk to."
                }
              } do |destination:|
           Boukensha::Mud::Navigator.render(mud_hooks.navigate(destination: destination))
