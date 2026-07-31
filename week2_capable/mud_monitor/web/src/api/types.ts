@@ -678,6 +678,98 @@ export interface KnowledgeFrontierPage extends KnowledgeEnvelope {
   count: number;
 }
 
+// --- The true world --------------------------------------------------------
+// GET /world/overlay. The agent's earned map joined against the world as it
+// actually is, parsed out of the CircleMUD .wld files. Everything here is
+// OPTIONAL decoration: the map renders without it, and the endpoint is polled
+// on its own slow interval so a world failure can never blank the map.
+//
+// The recurring shape below is a claim plus its confidence. Room identity is
+// joined on `weak_fingerprint`, which is exact but not unique — 17% of stock
+// tbaMUD shares a fingerprint with another room — so nothing here promises one
+// answer where the evidence supports several.
+
+/** How confidently an agent room was matched to a room in the true world. */
+export type WorldMatchTier =
+  /** unique fingerprint match. Certain. */
+  | "weak"
+  /** several true rooms are byte-identical; nothing can separate them. */
+  | "ambiguous"
+  /** name and prose are unique but the exit sets differ — the closed-door case,
+   *  since tbaMUD omits closed doors from the `[ Exits: ]` line. */
+  | "name_desc";
+
+export interface WorldMapping {
+  room_id: number;
+  tier: WorldMatchTier;
+  /** Every true room this could be. Length 1 exactly when `certain`. */
+  vnums: number[];
+  certain: boolean;
+  zone: number | null;
+}
+
+/**
+ * What the true world says about an edge the agent has walked.
+ *
+ *  confirmed   both ends pinned down and the edge is right. Proven.
+ *  consistent  a reading of the world exists in which it is right, but an end
+ *              is ambiguous — no contradiction found, which is weaker.
+ *  wrong       NO reading makes it right. Ambiguity makes confirming harder,
+ *              not refuting, so this holds even against an ambiguous room.
+ *  unverified  the far room is not in this world at all; says nothing.
+ */
+export type WorldVerdict = "confirmed" | "consistent" | "wrong" | "unverified";
+
+export interface WorldEdgeVerdict {
+  key: string;
+  room_id: number;
+  direction: string;
+  target_room_id: number;
+  verdict: WorldVerdict;
+  reason?: "wrong_target" | "no_such_exit" | "target_unmatched" | "ambiguous";
+  /** Set only when the candidates agree on one name. */
+  true_name: string | null;
+  true_names: string[];
+  true_vnums: number[];
+}
+
+/** A room the agent has not found, one step beyond one it has. */
+export interface WorldGhost {
+  key: string;
+  from_room_id: number;
+  direction: string;
+  /** null when candidates disagree; `names` then carries the shortlist. */
+  name: string | null;
+  names: string[];
+  vnums: number[];
+  certain: boolean;
+  /** true  = the agent knows this exit exists and has not walked it, so this
+   *          labels an existing frontier stub.
+   *  false = the agent does not know the exit is there at all — usually a
+   *          closed door, which tbaMUD leaves out of `[ Exits: ]` entirely. */
+  frontier: boolean;
+}
+
+export interface WorldCoverage {
+  zone: number;
+  true_rooms: number;
+  known_rooms: number;
+}
+
+export interface WorldOverlay {
+  /** false = nobody has run week0_explore/bin/convert-world. The normal state
+   *  of a fresh clone: the JSON is generated and gitignored. */
+  world_ready: boolean;
+  world: { rooms: number; zones: number; ambiguous_rooms: number };
+  mapping: WorldMapping[];
+  verdicts: WorldEdgeVerdict[];
+  ghosts: WorldGhost[];
+  coverage: WorldCoverage[];
+  /** Agent rooms with no counterpart in this world. Listed, never dropped. */
+  unmatched: number[];
+  profile?: string;
+}
+
 // --- Progression journal ---------------------------------------------------
 // The agent's append-only change log (.boukensha/journal/*.jsonl), read by the
 // Progression view. Unlike knowledge (a snapshot), this is a time series: the

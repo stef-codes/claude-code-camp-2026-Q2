@@ -8,7 +8,9 @@
 // graphs below.
 
 import { describe, expect, it } from "vitest";
-import type { KnowledgeExit, KnowledgeRoom } from "../../api/types";
+import type {
+  KnowledgeExit, KnowledgeRoom, WorldGhost, WorldOverlay, WorldVerdict,
+} from "../../api/types";
 import { displayName, layoutRooms } from "./layout";
 
 type ExitSpec = [ direction: string, target: number | null, traversals?: number ];
@@ -238,6 +240,201 @@ describe("layoutRooms", () => {
   it("handles an empty world", () => {
     const layout = layoutRooms([]);
     expect(layout).toMatchObject({ nodes: [], edges: [], stubs: [], cols: 0, rows: 0, components: 0 });
+  });
+});
+
+// The true-world overlay. Two properties matter more than any single label it
+// draws: it must never move a room, and it must never invent a fact. Both are
+// asserted directly below.
+describe("layoutRooms with a world overlay", () => {
+  function overlay(over: Partial<WorldOverlay> = {}): WorldOverlay {
+    return {
+      world_ready: true,
+      world: { rooms: 10, zones: 1, ambiguous_rooms: 0 },
+      mapping: [],
+      verdicts: [],
+      ghosts: [],
+      coverage: [],
+      unmatched: [],
+      ...over,
+    };
+  }
+
+  function ghost(fromRoomId: number, direction: string, over: Partial<WorldGhost> = {}): WorldGhost {
+    return {
+      key: `${fromRoomId}:${direction}`,
+      from_room_id: fromRoomId,
+      direction,
+      name: "Unfound Room",
+      names: [ "Unfound Room" ],
+      vnums: [ 900 ],
+      certain: true,
+      frontier: true,
+      ...over,
+    };
+  }
+
+  const twoRooms = [ room(1, [ [ "north", 2, 1 ], [ "east", null ] ]), room(2, [ [ "south", 1, 1 ] ]) ];
+
+  // The hard compatibility constraint: every existing caller and every existing
+  // test above passes one argument, and the overlay must be pure decoration.
+  it("produces identical geometry with no overlay, with null, and with an empty one", () => {
+    const bare = layoutRooms(twoRooms);
+    const nulled = layoutRooms(twoRooms, null);
+    const empty = layoutRooms(twoRooms, overlay());
+
+    expect(nulled.nodes).toEqual(bare.nodes);
+    expect(empty.nodes).toEqual(bare.nodes);
+    expect(bare.ghosts).toEqual([]);
+    expect(bare.wrongCount).toBe(0);
+    expect(bare.ghostBounds).toEqual({ originX: 0, originY: 0, cols: bare.cols, rows: bare.rows });
+    // No overlay means no verdict, rather than a defaulted one.
+    expect(bare.edges.every((e) => e.verdict === undefined)).toBe(true);
+  });
+
+  // Determinism is the reason placement never consults the overlay: the map
+  // polls knowledge every 3s and the world every 15s, so a ghost landing must
+  // not be able to shuffle the rooms under the reader's cursor.
+  it("adding ghosts never moves a room", () => {
+    const before = layoutRooms(twoRooms);
+    const after = layoutRooms(twoRooms, overlay({
+      ghosts: [ ghost(1, "west"), ghost(2, "south"), ghost(2, "east") ],
+    }));
+
+    expect(after.nodes).toEqual(before.nodes);
+    expect(after.edges.map((e) => e.key)).toEqual(before.edges.map((e) => e.key));
+  });
+
+  it("a ghost never occupies a cell a real room is in", () => {
+    // Every ghost here is aimed straight at an occupied cell: room 1's north is
+    // room 2, and room 2's south is room 1.
+    const layout = layoutRooms(twoRooms, overlay({
+      ghosts: [ ghost(1, "north"), ghost(2, "south") ],
+    }));
+
+    const roomCells = new Set(layout.nodes.map((n) => `${n.cx},${n.cy}`));
+    expect(layout.ghosts).toHaveLength(2);
+    for (const g of layout.ghosts) expect(roomCells.has(`${g.cx},${g.cy}`)).toBe(false);
+  });
+
+  it("two ghosts never share a cell", () => {
+    const layout = layoutRooms(twoRooms, overlay({
+      ghosts: [ ghost(1, "north"), ghost(1, "east"), ghost(1, "west"), ghost(2, "east") ],
+    }));
+
+    const cells = layout.ghosts.map((g) => `${g.cx},${g.cy}`);
+    expect(new Set(cells).size).toBe(cells.length);
+  });
+
+  it("places ghosts identically across two identical calls", () => {
+    const args = overlay({ ghosts: [ ghost(1, "north"), ghost(1, "west"), ghost(2, "east") ] });
+
+    expect(layoutRooms(twoRooms, args).ghosts).toEqual(layoutRooms(twoRooms, args).ghosts);
+  });
+
+  // ...and independently of the order the server happened to send them in.
+  it("ghost placement does not depend on the response's ordering", () => {
+    const list = [ ghost(2, "east"), ghost(1, "west"), ghost(1, "north") ];
+    const a = layoutRooms(twoRooms, overlay({ ghosts: list }));
+    const b = layoutRooms(twoRooms, overlay({ ghosts: [ ...list ].reverse() }));
+
+    expect(a.ghosts).toEqual(b.ghosts);
+  });
+
+  // A ghost above the top row lives at cy -1. Reported as an origin rather than
+  // folded into the node coordinates, precisely so the rooms stay put.
+  it("reports the extent ghosts reach into negative cells", () => {
+    const layout = layoutRooms([ room(1) ], overlay({ ghosts: [ ghost(1, "north"), ghost(1, "west") ] }));
+
+    expect(layout.ghostBounds.originX).toBe(-1);
+    expect(layout.ghostBounds.originY).toBe(-1);
+    expect(layout.ghostBounds.cols).toBe(2);
+    expect(layout.ghostBounds.rows).toBe(2);
+    // The node grid itself is untouched.
+    expect(layout.cols).toBe(1);
+    expect(layout.rows).toBe(1);
+  });
+
+  it("a vertical ghost is placed beside its source rather than dropped", () => {
+    const layout = layoutRooms([ room(1) ], overlay({ ghosts: [ ghost(1, "up") ] }));
+
+    expect(layout.ghosts).toHaveLength(1);
+    expect(layout.ghosts[0].planar).toBe(false);
+  });
+
+  it("a ghost from a room that is not on the map is skipped", () => {
+    const layout = layoutRooms([ room(1) ], overlay({ ghosts: [ ghost(99, "north") ] }));
+
+    expect(layout.ghosts).toEqual([]);
+  });
+
+  // ---------- verdicts ----------------------------------------------------
+
+  it("attaches verdicts to the edges they belong to, and only those", () => {
+    const layout = layoutRooms(twoRooms, overlay({
+      verdicts: [ {
+        key: "1:north", room_id: 1, direction: "north", target_room_id: 2,
+        verdict: "wrong", reason: "wrong_target",
+        true_name: "Somewhere Else", true_names: [ "Somewhere Else" ], true_vnums: [ 901 ],
+      } ],
+    }));
+
+    const north = layout.edges.find((e) => e.from === 1 && e.direction === "north")!;
+    expect(north.verdict).toBe("wrong");
+    expect(north.verdictReason).toBe("wrong_target");
+    expect(north.trueName).toBe("Somewhere Else");
+
+    expect(layout.edges.find((e) => e.from === 2)!.verdict).toBeUndefined();
+  });
+
+  // Counted separately from displacedCount: "the grid could not draw this" and
+  // "the agent believes something false" are different failures.
+  it("counts only contradicted edges, not consistent or confirmed ones", () => {
+    const verdict = (room_id: number, direction: string, v: WorldVerdict) => ({
+      key: `${room_id}:${direction}`, room_id, direction, target_room_id: 0,
+      verdict: v, true_name: null, true_names: [], true_vnums: [],
+    });
+
+    expect(layoutRooms(twoRooms, overlay({
+      verdicts: [ verdict(1, "north", "wrong"), verdict(2, "south", "consistent") ],
+    })).wrongCount).toBe(1);
+
+    expect(layoutRooms(twoRooms, overlay({
+      verdicts: [ verdict(1, "north", "confirmed"), verdict(2, "south", "consistent") ],
+    })).wrongCount).toBe(0);
+  });
+
+  // ---------- frontier truth ----------------------------------------------
+
+  it("labels a frontier stub with the room really behind it", () => {
+    const layout = layoutRooms(twoRooms, overlay({
+      ghosts: [ ghost(1, "east", { name: "The Bazaar", names: [ "The Bazaar" ] }) ],
+    }));
+
+    const stub = layout.stubs.find((s) => s.roomId === 1 && s.direction === "east")!;
+    expect(stub.truthLabel).toBe("The Bazaar");
+    expect(stub.truthCertain).toBe(true);
+  });
+
+  // The rule the whole overlay is built on: where the world cannot settle on
+  // one room, show the shortlist and mark it, never pick one and call it true.
+  it("an unsettled frontier shows every candidate and is marked uncertain", () => {
+    const layout = layoutRooms(twoRooms, overlay({
+      ghosts: [ ghost(1, "east", {
+        name: null, names: [ "The Bazaar", "McGintey Center Square" ],
+        vnums: [ 31538, 31575 ], certain: false,
+      }) ],
+    }));
+
+    const stub = layout.stubs.find((s) => s.direction === "east")!;
+    expect(stub.truthLabel).toBe("The Bazaar / McGintey Center Square");
+    expect(stub.truthCertain).toBe(false);
+  });
+
+  it("leaves stubs the world says nothing about alone", () => {
+    const layout = layoutRooms(twoRooms, overlay());
+
+    expect(layout.stubs.find((s) => s.direction === "east")!.truthLabel).toBeUndefined();
   });
 });
 

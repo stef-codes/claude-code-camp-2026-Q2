@@ -8,7 +8,7 @@
 // has. If the agent walked north to get somewhere, that room goes above this
 // one. Everything here follows from that.
 
-import type { KnowledgeRoom } from "../../api/types";
+import type { KnowledgeRoom, WorldOverlay, WorldVerdict } from "../../api/types";
 import { truncate } from "../../format";
 
 /** The eight planar directions, matching room_parser.rb's DIRECTIONS table —
@@ -66,6 +66,13 @@ export interface PlacedEdge {
   /** The far room records an exit back to this one — absence means a one-way. */
   reciprocal: boolean;
   key: string;
+  /** What the TRUE world says about this edge. Undefined when no overlay was
+   *  passed, or when the world has nothing to say about these two rooms. */
+  verdict?: WorldVerdict;
+  /** Set only for a `wrong` verdict: why it is wrong. */
+  verdictReason?: string;
+  /** The room this direction really leads to, when the world can name one. */
+  trueName?: string | null;
 }
 
 export interface FrontierStub {
@@ -80,18 +87,70 @@ export interface FrontierStub {
   free: boolean;
   dx: number;
   dy: number;
+  /** The name of the room actually behind this unwalked door, from the true
+   *  world. The highest-value thing the overlay adds: it turns "there is a way
+   *  north" into "north is the Windy Ridge". Undefined without an overlay. */
+  truthLabel?: string;
+  /** false = the true world offers several possibilities and `truthLabel` is a
+   *  shortlist, not an answer. The UI must not render it as a fact. */
+  truthCertain?: boolean;
+}
+
+/**
+ * A room the agent has NOT found, one step beyond one it has.
+ *
+ * Deliberately not a `PlacedNode`: there is no `KnowledgeRoom` behind it and no
+ * detail page to link to, because the agent has never been there. Rendering it
+ * as anything a reader could click would promise a page that cannot exist.
+ */
+export interface GhostNode {
+  key: string;
+  fromRoomId: number;
+  direction: string;
+  /** The true room name, or null when the candidates disagree. */
+  name: string | null;
+  /** Every possibility. Length > 1 is exactly when `name` is null. */
+  names: string[];
+  vnums: number[];
+  certain: boolean;
+  /** true  = labels an exit the agent knows about but has not walked.
+   *  false = the agent does not know this exit exists — usually a closed door,
+   *          which tbaMUD omits from `[ Exits: ]` entirely. The most
+   *          interesting thing on the map: a way out nothing in the agent's
+   *          own memory hints at. */
+  frontier: boolean;
+  cx: number;
+  cy: number;
+  planar: boolean;
 }
 
 export interface MapLayout {
   nodes: PlacedNode[];
   edges: PlacedEdge[];
   stubs: FrontierStub[];
+  /** Empty unless an overlay was passed. Never affects node placement. */
+  ghosts: GhostNode[];
+  /**
+   * Extent in cells once ghosts are included.
+   *
+   * Nodes are anchored at 0,0, but a ghost north of the top row sits at cy -1,
+   * so drawing ghosts needs a canvas that reaches into negative space. `originX`
+   * and `originY` are ≤ 0 and say how far. They are reported rather than folded
+   * into the node coordinates on purpose: folding would move every room the
+   * moment the overlay poll landed, which is precisely the reshuffle the
+   * placement comments above go to such lengths to avoid.
+   */
+  ghostBounds: { originX: number; originY: number; cols: number; rows: number };
   /** Extent in cells. Always anchored at 0,0 after component packing. */
   cols: number;
   rows: number;
   components: number;
   /** Placement collisions — geometry the map had to lie about. Surfaced. */
   displacedCount: number;
+  /** Edges the true world contradicts outright. Surfaced next to
+   *  `displacedCount`, because "the picture is bent" and "the agent believes
+   *  something false" are different failures and deserve different counts. */
+  wrongCount: number;
 }
 
 const cellKey = (x: number, y: number) => `${x},${y}`;
@@ -143,8 +202,18 @@ interface LocalNode {
  * anchoring on the player would slide the whole world sideways every time the
  * agent walks through a door; keeping the player centred is the viewport's job).
  * No Object.keys iteration, no Set ordering, no clock.
+ *
+ * `overlay` is optional and purely additive. It decorates edges with the true
+ * world's verdict, labels frontier stubs with what is really behind them, and
+ * adds ghost cells for rooms the agent has not found — but it NEVER reaches the
+ * placement above. Two reasons, and both are load-bearing. Determinism: node
+ * positions must not shift when a slow 15s overlay poll lands between two 3s
+ * knowledge polls, or the map would visibly rearrange itself for no reason the
+ * reader can see. And honesty: the geometry is the agent's, so the truth is not
+ * allowed to straighten it out. A map that quietly corrects itself against the
+ * real world stops being a picture of what the agent believes.
  */
-export function layoutRooms(rooms: KnowledgeRoom[]): MapLayout {
+export function layoutRooms(rooms: KnowledgeRoom[], overlay?: WorldOverlay | null): MapLayout {
   const sorted = [ ...rooms ].sort((a, b) => a.id - b.id);
   const byId = new Map<number, KnowledgeRoom>();
   for (const room of sorted) byId.set(room.id, room);
@@ -241,9 +310,18 @@ export function layoutRooms(rooms: KnowledgeRoom[]): MapLayout {
     }
   }
 
+  // Overlay lookups, keyed the way the server keys them: room id + direction.
+  // Empty maps when there is no overlay, so every access below is uniform and
+  // the no-overlay path costs one Map.get that misses.
+  const verdicts = new Map<string, WorldOverlay["verdicts"][number]>();
+  const ghostsByEdge = new Map<string, WorldOverlay["ghosts"][number]>();
+  for (const v of overlay?.verdicts ?? []) verdicts.set(`${v.room_id}:${v.direction}`, v);
+  for (const g of overlay?.ghosts ?? []) ghostsByEdge.set(`${g.from_room_id}:${g.direction}`, g);
+
   const edges: PlacedEdge[] = [];
   const stubs: FrontierStub[] = [];
   let displacedCount = 0;
+  let wrongCount = 0;
 
   for (const room of sorted) {
     const from = coords.get(room.id);
@@ -257,6 +335,7 @@ export function layoutRooms(rooms: KnowledgeRoom[]): MapLayout {
         // target_room_id IS the exploration frontier: a named door the agent
         // has seen and never walked through.
         const free = planar && !occupiedGlobal.has(cellKey(from.cx + v[0], from.cy + v[1]));
+        const truth = ghostsByEdge.get(`${room.id}:${exit.direction}`);
         stubs.push({
           roomId: room.id,
           direction: exit.direction,
@@ -264,6 +343,11 @@ export function layoutRooms(rooms: KnowledgeRoom[]): MapLayout {
           free,
           dx: planar ? v[0] : 0,
           dy: planar ? v[1] : 0,
+          // The door's own name comes from the autoexit line and is the agent's;
+          // this is the world's. When the world cannot settle on one room, the
+          // shortlist is shown as a shortlist rather than as an answer.
+          truthLabel: truth ? (truth.name ?? truth.names.join(" / ")) : undefined,
+          truthCertain: truth?.certain,
         });
         continue;
       }
@@ -277,6 +361,9 @@ export function layoutRooms(rooms: KnowledgeRoom[]): MapLayout {
       const displaced = planar && !(to.cx - from.cx === v[0] && to.cy - from.cy === v[1]);
       if (displaced) displacedCount++;
 
+      const verdict = verdicts.get(`${room.id}:${exit.direction}`);
+      if (verdict?.verdict === "wrong") wrongCount++;
+
       edges.push({
         from: room.id,
         to: exit.target_room_id,
@@ -286,11 +373,103 @@ export function layoutRooms(rooms: KnowledgeRoom[]): MapLayout {
         traversals: exit.traversals,
         reciprocal: backlinks.get(room.id)?.has(exit.target_room_id) ?? false,
         key: `${room.id}:${exit.direction}:${exit.target_room_id}`,
+        verdict: verdict?.verdict,
+        verdictReason: verdict?.reason,
+        trueName: verdict?.true_name,
       });
     }
   }
 
-  return { nodes, edges, stubs, cols, rows, components: components.length, displacedCount };
+  const ghosts = placeGhosts(overlay, coords, occupiedGlobal);
+
+  return {
+    nodes,
+    edges,
+    stubs,
+    ghosts,
+    ghostBounds: ghostBounds(ghosts, cols, rows),
+    cols,
+    rows,
+    components: components.length,
+    displacedCount,
+    wrongCount,
+  };
+}
+
+function ghostBounds(ghosts: GhostNode[], cols: number, rows: number) {
+  let originX = 0, originY = 0, maxX = cols - 1, maxY = rows - 1;
+  for (const g of ghosts) {
+    if (g.cx < originX) originX = g.cx;
+    if (g.cy < originY) originY = g.cy;
+    if (g.cx > maxX) maxX = g.cx;
+    if (g.cy > maxY) maxY = g.cy;
+  }
+  return { originX, originY, cols: maxX - originX + 1, rows: maxY - originY + 1 };
+}
+
+/**
+ * Put the unfound rooms on the grid, without letting them touch the found ones.
+ *
+ * The occupancy map starts as a COPY of every real cell, so `nearestFree` can
+ * push a ghost aside but a ghost can never push a room. That is the invariant
+ * the whole overlay rests on: the agent's map owns the geometry, and the truth
+ * is drawn into the gaps left over.
+ *
+ * Ghosts are per-edge, not per-room: two known rooms that both lead to one
+ * unfound room produce two ghosts. That is deliberate for a first version — the
+ * claim being drawn is "this way lies X", which is true from each side, and
+ * merging them would mean choosing which source to place the survivor next to.
+ */
+function placeGhosts(
+  overlay: WorldOverlay | null | undefined,
+  coords: Map<number, { cx: number; cy: number }>,
+  realCells: Set<string>,
+): GhostNode[] {
+  if (!overlay?.ghosts?.length) return [];
+
+  const occupied = new Map<string, number>();
+  for (const cell of realCells) occupied.set(cell, -1);
+
+  // Fixed iteration order, independent of the server's, so a ghost lands in the
+  // same cell on every poll. The server already sorts, but relying on a
+  // response's order for placement stability is the kind of coupling that
+  // breaks silently.
+  const ordered = [ ...overlay.ghosts ].sort((a, b) => {
+    const d = a.from_room_id - b.from_room_id;
+    if (d !== 0) return d;
+    const r = dirRank(a.direction) - dirRank(b.direction);
+    return r !== 0 ? r : a.direction.localeCompare(b.direction);
+  });
+
+  const ghosts: GhostNode[] = [];
+  for (const ghost of ordered) {
+    const from = coords.get(ghost.from_room_id);
+    if (!from) continue;
+
+    const v = V[ghost.direction];
+    const planar = v !== undefined;
+    // `up`/`down` have no vector, exactly as they have none for a real edge:
+    // placed adjacent to their source rather than dropped.
+    const [ wx, wy ] = planar ? [ from.cx + v[0], from.cy + v[1] ] : [ from.cx, from.cy ];
+    const [ cx, cy ] = nearestFree(occupied, wx, wy);
+    occupied.set(cellKey(cx, cy), ghost.from_room_id);
+
+    ghosts.push({
+      key: ghost.key,
+      fromRoomId: ghost.from_room_id,
+      direction: ghost.direction,
+      name: ghost.name,
+      names: ghost.names,
+      vnums: ghost.vnums,
+      certain: ghost.certain,
+      frontier: ghost.frontier,
+      cx,
+      cy,
+      planar,
+    });
+  }
+
+  return ghosts;
 }
 
 /** A room the MUD never named still needs something on its box. */
@@ -310,5 +489,20 @@ export function worldSize(layout: MapLayout): { width: number; height: number } 
   return {
     width: Math.max(0, layout.cols * STEP_X - GAP_X),
     height: Math.max(0, layout.rows * STEP_Y - GAP_Y),
+  };
+}
+
+/** The canvas needed once ghosts are drawn, plus the pixel offset that brings
+ *  negative ghost cells back into view. `offsetX/offsetY` are ≥ 0 and are zero
+ *  whenever no ghost reaches above or left of the node grid. */
+export function ghostWorldSize(layout: MapLayout): {
+  width: number; height: number; offsetX: number; offsetY: number;
+} {
+  const b = layout.ghostBounds;
+  return {
+    width: Math.max(0, b.cols * STEP_X - GAP_X),
+    height: Math.max(0, b.rows * STEP_Y - GAP_Y),
+    offsetX: -b.originX * STEP_X,
+    offsetY: -b.originY * STEP_Y,
   };
 }

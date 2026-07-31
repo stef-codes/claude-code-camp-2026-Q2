@@ -14,6 +14,7 @@ import type {
   SessionDetail,
   SessionSummary,
   TelnetPage,
+  WorldOverlay,
 } from "./types";
 
 class ApiRequestError extends Error {
@@ -135,6 +136,21 @@ export function fetchKnowledgeMap(): Promise<KnowledgeMapPage> {
   return Promise.all([ fetchKnowledgeRooms({ limit: 1000 }), fetchKnowledge() ]).then(
     ([ rooms, overview ]) => ({ ...rooms, player: overview.player }),
   );
+}
+
+/**
+ * The true world, joined against the agent's map.
+ *
+ * Its own request rather than a third leg of `fetchKnowledgeMap`, and polled on
+ * its own much slower interval, for two reasons. The world is static — it only
+ * changes when someone regenerates the parsed JSON — so it does not deserve a
+ * share of the map's 3s budget. And keeping it separate is what guarantees a
+ * world failure cannot blank the map: `usePolling` surfaces an error per call
+ * site, so this one going red leaves the map rendering exactly as it did before
+ * the overlay existed.
+ */
+export function fetchWorldOverlay(): Promise<WorldOverlay> {
+  return get("/world/overlay");
 }
 
 export function fetchKnowledgeRoom(id: number | string): Promise<KnowledgeRoomDetail> {
