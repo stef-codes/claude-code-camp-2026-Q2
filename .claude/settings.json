@@ -36,10 +36,27 @@
       "Bash(ruby -Ilib -Itest -e 'Dir.glob\\(\"test/test_*.rb\"\\).each { |f| require File.expand_path\\(f\\) }')",
       "Bash(git commit *)",
       "Bash(python3 -)",
-      "Bash(ruby -Ilib -Itest test/test_route_finder.rb)"
+      "Bash(ruby -Ilib -Itest test/test_route_finder.rb)",
+      "Bash(sqlite3 .boukensha/knowledge.sqlite3 \"select id, name, weak_fingerprint from rooms;\")",
+      "Bash(sqlite3 .boukensha/knowledge.sqlite3 \"select room_id, direction, target_room_id, traversals from room_exits order by room_id, direction;\")",
+      "Bash(time uv run circlemud-parse --dest /private/tmp/claude-501/-Users-stefanie-code-claude-code-camp-2026-Q2/72dae30a-c016-4b4f-b168-1fb0c06a7bc6/scratchpad/315.json ../infrastructure/lib/world/wld/315.wld)",
+      "Bash(bin/rails runner *)",
+      "Bash(bin/rails test *)",
+      "Bash(cd /Users/stefanie/code/claude-code-camp-2026-Q2/week2_capable/mud_monitor/api *)",
+      "Bash(npx tsc *)",
+      "Bash(npm test *)",
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(pkill -f \"rails test\")",
+      "Bash(curl -s -o /dev/null http://localhost:3000/up)",
+      "Bash(curl -s http://localhost:3000/api/v1/health -H 'Cookie: mud_monitor_profile=legacy')",
+      "Bash(curl -s http://localhost:3000/api/v1/world/overlay -H 'Cookie: mud_monitor_profile=legacy')",
+      "Bash(curl -s http://localhost:3000/api/v1/world/overlay -H 'Cookie: mud_monitor_profile=legacy' -o /private/tmp/claude-501/-Users-stefanie-code-claude-code-camp-2026-Q2/72dae30a-c016-4b4f-b168-1fb0c06a7bc6/scratchpad/live_overlay.json -w \"HTTP %{http_code}  %{size_download} bytes  %{time_total}s\\\\n\")",
+      "Bash(curl -s http://localhost:3000/api/v1/world/overlay -H 'Cookie: mud_monitor_profile=legacy' -o /dev/null -w \"HTTP %{http_code}  %{time_total}s\\\\n\")",
+      "Bash(curl -s -o /dev/null -w \"vite 5173: HTTP %{http_code}\\\\n\" http://localhost:5173/)"
     ],
     "additionalDirectories": [
-      "/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha/sessions"
+      "/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha/sessions",
+      "/tmp"
     ]
   }
 }
