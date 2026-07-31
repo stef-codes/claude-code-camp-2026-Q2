@@ -1,3 +1,4 @@
+
 tasks:
   player:
     provider: anthropic        # provider name (string)
@@ -23,6 +24,49 @@ observability:
     # writes content to span *events*, and Langfuse reads span *attributes*.
     capture_content: false
     content_max_bytes: 4096
+
+# Allowlists for the framework's OWN automatic tool users -- the composites that
+# run outside the model's turn. Each key is a `Boukensha.tool_dispatcher(<key>)`
+# call site, and the lookup is `dig(:tools, <key>, :allow)`.
+#
+# THIS BLOCK IS LOAD-BEARING. A missing key is not "unrestricted", it is
+# `Permissions.deny_all` (boukensha.rb:406-407) -- the dispatcher then registers
+# no tools, every call raises UnknownToolError, and Hooks#guard swallows it. The
+# composite becomes a silent no-op. Deleting a key here disables a feature
+# without any error reaching the log.
+tools:
+  # Everything Mud::Hooks does on the model's behalf shares this one dispatcher,
+  # so the list is the union of ALL its call sites, not just the survey's:
+  #
+  #   poll                 before_tools     (hooks.rb:166)
+  #   look                 cold_look        (hooks.rb:303)
+  #   check(kind: score)   before_turn      (hooks.rb:143)
+  #   check(kind: exits)   survey           (hooks.rb:362)
+  #   consider, examine    survey's appraisal pair
+  #
+  # Omitting one does not raise anywhere the operator will see it — the call
+  # dies as UnknownToolError inside Hooks#guard, and the feature just quietly
+  # stops happening. `poll` and `check(kind: score)` were both missing from the
+  # first draft of this block, which cost the agent its thinking-gap events and
+  # its score refresh with no error at all.
+  #
+  # `look` is deliberately absent from the *player's* own allowlist, so this is
+  # the only route to a room survey.
+  room_survey:
+    allow:
+      - poll
+      - look
+      - "check(kind: exits|score)"
+      - consider
+      - examine
+  # Navigation walks a route the agent already knows. Its slice is deliberately
+  # narrower than the survey's -- `move` only. No `look` (the arrival text from a
+  # move is all it needs), and no `flee` (a route is a decision, not a panic).
+  # Directions are pinned to the six the daemon's `move` enum declares, which is
+  # also exactly what RouteFinder will route over.
+  navigate:
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
 
 # Tools for the agent come from MCP servers listed here (boukensha ships none
 # of its own). The `mud` server is the Ruby mud-manager daemon spawned over
