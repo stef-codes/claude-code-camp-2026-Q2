@@ -42,6 +42,13 @@ Rails.application.routes.draw do
       get "knowledge/entities",  to: "knowledge#entities"
       get "knowledge/player",    to: "knowledge#player"
       get "knowledge/frontier",  to: "knowledge#frontier"
+
+      # The TRUE world graph joined against that memory — what IS, against what
+      # the agent has found. Its own endpoint rather than more keys on
+      # `knowledge`, and polled far more slowly, because the world only changes
+      # when someone regenerates the parsed JSON, and because a world failure
+      # must not be able to take the map down with it.
+      get "world/overlay", to: "world#overlay"
     end
   end
 
