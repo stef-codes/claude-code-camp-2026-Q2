@@ -2233,6 +2233,13 @@ main:has(.knowledge-map-page) .error {
   cursor: help;
 }
 
+/* "displaced" means the picture is bent; "contradicted" means the agent
+   believes something false. Different failures, so a different colour and not
+   just a different count. */
+.map-warn-wrong {
+  color: var(--danger);
+}
+
 .knowledge-map-viewport {
   position: relative;
   overflow: hidden;
@@ -2258,6 +2265,18 @@ main:has(.knowledge-map-page) .error {
   top: 0;
   left: 0;
   transform-origin: 0 0;
+}
+
+/* The node layer carries the same translation the SVG puts on its viewBox, so
+   room boxes and edges stay registered when the ghost layer pushes the canvas
+   into negative cells. Zero-sized and static: it must not become a layout box
+   of its own, since every .map-node inside it is absolutely positioned. */
+.knowledge-map-nodes {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
 }
 
 /* Edges under the nodes, in one transformed wrapper with them, so the two
@@ -2323,6 +2342,76 @@ main:has(.knowledge-map-page) .error {
   fill: var(--muted);
   font-size: 11px;
   font-family: ui-monospace, monospace;
+}
+
+/* ---------------------------------------------------------------------
+   The true world overlay. Everything here is subordinate to the agent's own
+   map: nothing in this block may read louder than a real room, because the
+   page is about what the agent believes and this is the annotation.
+   --------------------------------------------------------------------- */
+
+/* The agent believes something the true world contradicts. SOLID and loud,
+   deliberately unlike .map-edge-displaced, which is dashed. Dashed already
+   means "we could not draw this"; "this is false" is a different assertion and
+   has earned its own channel rather than a second shade of the same one. */
+.map-edge-wrong {
+  stroke: var(--danger);
+  stroke-width: 3;
+  stroke-dasharray: none;
+}
+
+/* What is really behind an unwalked door — the highest-value thing the overlay
+   adds, so it is the one piece of it allowed to be brighter than muted. */
+.map-truth {
+  fill: color-mix(in srgb, var(--accent) 75%, var(--muted));
+}
+
+/* ...unless the world could not settle on one room, in which case the label is
+   a shortlist and must not read as a fact. */
+.map-truth-unsure {
+  fill: var(--muted);
+  font-style: italic;
+}
+
+/* A room the agent has not found. Drawn, but drawn as absent: no fill weight,
+   no border solidity, nothing that competes with a room it actually walked to.
+   Not clickable either — there is no detail page for a room nobody has stood
+   in, and this element is a <rect>, not a <Link>, so there is nothing to click. */
+.map-ghost rect {
+  fill: color-mix(in srgb, var(--muted) 7%, transparent);
+  stroke: color-mix(in srgb, var(--muted) 45%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 6 5;
+}
+
+.map-ghost text {
+  fill: color-mix(in srgb, var(--muted) 85%, transparent);
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+}
+
+.map-ghost .map-ghost-meta {
+  font-size: 10px;
+  fill: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+/* Several true rooms fit and nothing can separate them. Fainter still — the
+   label under it is a shortlist, not an answer. */
+.map-ghost-unsure rect {
+  stroke-dasharray: 3 6;
+}
+
+.map-ghost-unsure text {
+  font-style: italic;
+}
+
+/* The agent does not know this exit exists at all — usually a closed door,
+   which tbaMUD omits from `[ Exits: ]` entirely. The most interesting thing on
+   the map: a way out that nothing in the agent's own memory hints at. So this
+   one gets a warm edge, the only accent the ghost layer is allowed. */
+.map-ghost-hidden rect {
+  stroke: color-mix(in srgb, var(--accent) 55%, var(--muted));
+  stroke-dasharray: 2 4;
 }
 
 .map-node {
@@ -2484,6 +2573,16 @@ main:has(.knowledge-map-page) .error {
   border-top-color: var(--muted);
   border-top-style: dashed;
   border-top-width: 1.25px;
+}
+
+.map-key-wrong {
+  border-top-color: var(--danger);
+  border-top-width: 3px;
+}
+
+.map-key-ghost {
+  border-top-color: color-mix(in srgb, var(--muted) 45%, transparent);
+  border-top-style: dashed;
 }
 
 .map-note {

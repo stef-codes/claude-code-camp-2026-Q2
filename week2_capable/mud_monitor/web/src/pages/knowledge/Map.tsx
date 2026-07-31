@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import { fetchKnowledgeMap } from "../../api/client";
+import { fetchKnowledgeMap, fetchWorldOverlay } from "../../api/client";
 import { usePolling } from "../../api/usePolling";
 import KnowledgeEmpty from "../../components/KnowledgeEmpty";
 import { useReportEnvelope } from "./Knowledge";
 import MapNode from "./MapNode";
-import { CELL_H, CELL_W, cellCenter, layoutRooms, worldSize } from "./layout";
+import { CELL_H, CELL_W, cellCenter, ghostWorldSize, layoutRooms, worldSize } from "./layout";
 import type { FrontierStub, PlacedNode } from "./layout";
+import type { WorldOverlay } from "../../api/types";
 
 const MIN_SCALE = 0.3;
 const MAX_SCALE = 2;
@@ -14,11 +15,29 @@ const MAX_SCALE = 2;
 const LOD_SCALE = 0.6;
 /** How far a frontier arrow reaches out of its room — half a cell. */
 const STUB_LENGTH = 62;
+/**
+ * The true world only changes when someone regenerates the parsed JSON, so it
+ * gets its own slow interval instead of a share of the map's 3s budget. Kept as
+ * a separate poll rather than a third leg of `fetchKnowledgeMap` so that a
+ * world failure surfaces on its own and can never blank the map.
+ */
+const OVERLAY_POLL_MS = 15000;
 /** Pointer travel that turns a click on a room into a pan of the map. */
 const DRAG_THRESHOLD = 4;
 const FIT_PADDING = 48;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** "4/83 of zone 315" — a fraction of the zones the agent has actually touched.
+ *  Reporting all 189 zones with a zero would be noise, and the denominator is
+ *  what makes the numerator mean anything. */
+function coverageLabel(overlay: WorldOverlay): string {
+  const known = overlay.coverage.reduce((n, c) => n + c.known_rooms, 0);
+  const total = overlay.coverage.reduce((n, c) => n + c.true_rooms, 0);
+  if (total === 0) return "no zone matched";
+  const zones = overlay.coverage.length;
+  return `${known}/${total} of ${zones === 1 ? `zone ${overlay.coverage[0].zone}` : `${zones} zones`}`;
+}
 
 interface View {
   x: number;
@@ -52,11 +71,21 @@ function onBoxEdge(from: { x: number; y: number }, to: { x: number; y: number },
  */
 export default function KnowledgeMap() {
   const { data, error } = usePolling(() => fetchKnowledgeMap(), []);
+  // Deliberately NOT reported through useReportEnvelope: the envelope banner is
+  // about the agent's memory, and the world is a different file with a different
+  // freshness. `overlayError` is swallowed below for the same reason the poll is
+  // separate — the map must render whether or not the world is available.
+  const { data: overlay, error: overlayError } = usePolling(
+    () => fetchWorldOverlay(), [], OVERLAY_POLL_MS,
+  );
   useReportEnvelope(data);
 
   const [ view, setView ] = useState<View>({ x: 0, y: 0, k: 1 });
   const [ follow, setFollow ] = useState(true);
   const [ showFrontier, setShowFrontier ] = useState(true);
+  // Off by default. Ghost cells expand the canvas and change what the page is
+  // about — the default view of this tab is the agent's belief, unannotated.
+  const [ showTruth, setShowTruth ] = useState(false);
   const [ detail, setDetail ] = useState(true);
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -74,7 +103,7 @@ export default function KnowledgeMap() {
   const suppressClick = useRef(false);
 
   const rooms = data?.rooms;
-  const layout = useMemo(() => layoutRooms(rooms ?? []), [ rooms ]);
+  const layout = useMemo(() => layoutRooms(rooms ?? [], overlay), [ rooms, overlay ]);
 
   const nodeById = useMemo(() => {
     const map = new Map<number, PlacedNode>();
@@ -93,29 +122,42 @@ export default function KnowledgeMap() {
   }, [ layout ]);
 
   const playerRoomId = data?.player?.current_room?.id ?? null;
-  const world = worldSize(layout);
+  // With ghosts on, the canvas grows and may need to reach into negative cells;
+  // `offset` translates the whole scene so the node grid keeps its coordinates
+  // and nothing shifts unless the reader asks for the ghosts.
+  const ghostWorld = ghostWorldSize(layout);
+  const truthOn = showTruth && (overlay?.world_ready ?? false);
+  const world = truthOn ? ghostWorld : worldSize(layout);
+  const offsetX = truthOn ? ghostWorld.offsetX : 0;
+  const offsetY = truthOn ? ghostWorld.offsetY : 0;
+
+  // `fit` and `centreOn` are toolbar callbacks and must not be rebuilt (and
+  // re-bound) on every 3s poll, so they read through refs instead of closing
+  // over the layout. The scene offset rides along: node cells keep their
+  // coordinates when ghosts are shown, and everything is translated instead, so
+  // any centring has to add the same translation.
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const sceneRef = useRef({ world, offsetX, offsetY });
+  sceneRef.current = { world, offsetX, offsetY };
 
   const centreOn = useCallback((cx: number, cy: number, scale?: number) => {
     const el = viewportRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const c = cellCenter(cx, cy);
+    const { offsetX: ox, offsetY: oy } = sceneRef.current;
     setView((v) => {
       const k = scale ?? v.k;
-      return { k, x: rect.width / 2 - c.x * k, y: rect.height / 2 - c.y * k };
+      return { k, x: rect.width / 2 - (c.x + ox) * k, y: rect.height / 2 - (c.y + oy) * k };
     });
   }, []);
-
-  // `fit` is a toolbar button and must not be rebuilt (and re-bound) on every
-  // 3s poll, so it reads the layout through a ref instead of closing over it.
-  const layoutRef = useRef(layout);
-  layoutRef.current = layout;
 
   const fit = useCallback(() => {
     const el = viewportRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const size = worldSize(layoutRef.current);
+    const size = sceneRef.current.world;
     if (size.width <= 0 || size.height <= 0) return;
     const k = clamp(
       Math.min((rect.width - FIT_PADDING) / size.width, (rect.height - FIT_PADDING) / size.height),
@@ -249,6 +291,15 @@ export default function KnowledgeMap() {
         found, placed by following the directions it believes connect them. Rooms are laid out from{" "}
         <strong>#{layout.nodes[0]?.room.id}</strong> outward; the MUD is not a grid, so where two exits
         disagree the edge is drawn dashed rather than straightened out.
+        {truthOn && (
+          <>
+            {" "}
+            <strong>True world is on:</strong> faint boxes are rooms the agent has not found, and the
+            geometry is still the agent's — the truth is drawn into the gaps, never used to correct it.
+            A room the agent has stood in cannot always be told apart from an identical one elsewhere, so
+            anything the world cannot settle is shown as a shortlist rather than an answer.
+          </>
+        )}
       </p>
 
       <div className="knowledge-map-toolbar">
@@ -265,6 +316,21 @@ export default function KnowledgeMap() {
         <label>
           <input type="checkbox" checked={detail} onChange={(e) => setDetail(e.target.checked)} />
           Detail
+        </label>
+        <label
+          title={
+            overlay?.world_ready
+              ? "draw the world as it actually is, from the .wld files, against what the agent found"
+              : "no parsed world available — run week0_explore/bin/convert-world"
+          }
+        >
+          <input
+            type="checkbox"
+            checked={showTruth}
+            disabled={!overlay?.world_ready}
+            onChange={(e) => setShowTruth(e.target.checked)}
+          />
+          True world
         </label>
         <span className="knowledge-map-stats">
           {layout.nodes.length} rooms · {layout.edges.length} known exits · {layout.stubs.length} unwalked
@@ -290,6 +356,36 @@ export default function KnowledgeMap() {
               </span>
             </>
           )}
+          {layout.wrongCount > 0 && (
+            <>
+              {" · "}
+              <span
+                className="map-warn map-warn-wrong"
+                title="edges no reading of the true world can make right — the agent believes something false"
+              >
+                {layout.wrongCount} contradicted
+              </span>
+            </>
+          )}
+          {overlay?.world_ready && (
+            <>
+              {" · "}
+              <span title={`${overlay.world.rooms} rooms in the true world, ${overlay.world.zones} zones`}>
+                {coverageLabel(overlay)}
+              </span>
+              {overlay.unmatched.length > 0 && (
+                <>
+                  {" · "}
+                  <span
+                    className="map-warn"
+                    title="rooms with no counterpart in the parsed world — a zone nobody has parsed, or a room that has been edited since"
+                  >
+                    {overlay.unmatched.length} unplaced
+                  </span>
+                </>
+              )}
+            </>
+          )}
           {" · "}
           {Math.round(view.k * 100)}%
         </span>
@@ -312,11 +408,14 @@ export default function KnowledgeMap() {
             height: world.height,
           }}
         >
+          {/* The viewBox origin, not the contents, carries the ghost offset —
+              so every coordinate below stays in node space and the SVG and the
+              HTML node layer cannot disagree about where a room is. */}
           <svg
             className="knowledge-map-edges"
             width={world.width}
             height={world.height}
-            viewBox={`0 0 ${world.width} ${world.height}`}
+            viewBox={`${-offsetX} ${-offsetY} ${world.width} ${world.height}`}
           >
             <defs>
               <marker id="map-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
@@ -345,11 +444,30 @@ export default function KnowledgeMap() {
               else if (edge.reciprocal) classes.push("map-edge-walked");
               else classes.push("map-edge-oneway");
 
-              const title = lie
+              // A different KIND of failure from `displaced`, so a different
+              // visual channel: displaced means the grid could not draw the
+              // agent's belief, wrong means the belief itself is false. Added
+              // last so it wins the cascade over whatever the edge already was,
+              // and shown whether or not the ghost layer is switched on — a
+              // contradiction is not decoration.
+              if (truthOn && edge.verdict === "wrong") classes.push("map-edge-wrong");
+
+              const truth =
+                edge.verdict === "wrong"
+                  ? edge.verdictReason === "no_such_exit"
+                    ? " — the true world gives this room no such exit"
+                    : ` — this way really leads to ${edge.trueName ?? "somewhere else"}`
+                  : edge.verdict === "consistent"
+                    ? " — matches the true world, but this room could be one of several"
+                    : edge.verdict === "confirmed"
+                      ? " — confirmed against the true world"
+                      : "";
+
+              const title = (lie
                 ? `${edge.direction} — drawn ${edge.planar ? "displaced" : "non-planar"}: the grid cannot place these two rooms as ${edge.direction}`
                 : `${edge.direction}${edge.traversals === 0 ? " — known, never walked" : ""}${
                     edge.traversals > 0 && !edge.reciprocal ? " — one way: no exit back is recorded" : ""
-                  }`;
+                  }`) + (truthOn ? truth : "");
 
               const d = lie
                 ? `M${p1.x},${p1.y} Q${(p1.x + p2.x) / 2 - (p2.y - p1.y) * 0.22},${
@@ -385,6 +503,10 @@ export default function KnowledgeMap() {
                   x: start.x + (stub.dx / len) * STUB_LENGTH,
                   y: start.y + (stub.dy / len) * STUB_LENGTH,
                 };
+                // The agent's own label for the door comes off the autoexit
+                // line; this is what is really behind it. Uncertain answers are
+                // marked, never smoothed into a fact.
+                const truthLabel = truthOn ? stub.truthLabel : undefined;
                 return (
                   <g key={`${stub.roomId}:${stub.direction}`} className="map-stub">
                     <line
@@ -394,7 +516,14 @@ export default function KnowledgeMap() {
                       y2={end.y}
                       markerEnd="url(#map-frontier-arrow)"
                     >
-                      <title>{`${stub.direction} — never walked`}</title>
+                      <title>
+                        {`${stub.direction} — never walked` +
+                          (truthLabel
+                            ? stub.truthCertain
+                              ? ` — leads to ${truthLabel}`
+                              : ` — leads to one of: ${truthLabel}`
+                            : "")}
+                      </title>
                     </line>
                     {detailed && (
                       <text
@@ -403,22 +532,76 @@ export default function KnowledgeMap() {
                         textAnchor={stub.dx > 0 ? "start" : stub.dx < 0 ? "end" : "middle"}
                       >
                         {stub.label}
+                        {truthLabel && (
+                          <tspan className={stub.truthCertain ? "map-truth" : "map-truth map-truth-unsure"}>
+                            {` → ${truthLabel}`}
+                          </tspan>
+                        )}
                       </text>
                     )}
                   </g>
                 );
               })}
+
+            {/* Rooms the agent has NOT found, one step beyond ones it has.
+                Plain <rect>/<text> rather than MapNode/<Link>: there is no
+                detail page for a room nobody has ever stood in, and anything
+                clickable would promise one. Drawn before the node layer so a
+                real room always sits on top. */}
+            {truthOn &&
+              layout.ghosts.map((ghost) => {
+                const c = cellCenter(ghost.cx, ghost.cy);
+                const label = ghost.name ?? ghost.names.join(" / ");
+                const classes = [ "map-ghost" ];
+                if (!ghost.certain) classes.push("map-ghost-unsure");
+                // The agent has no exit here at all — usually a closed door,
+                // which tbaMUD omits from `[ Exits: ]`. A way out that nothing
+                // in the agent's own memory hints at.
+                if (!ghost.frontier) classes.push("map-ghost-hidden");
+
+                return (
+                  <g key={ghost.key} className={classes.join(" ")}>
+                    <rect
+                      x={c.x - CELL_W / 2}
+                      y={c.y - CELL_H / 2}
+                      width={CELL_W}
+                      height={CELL_H}
+                      rx={7}
+                    />
+                    <text x={c.x} y={c.y - 4} textAnchor="middle">
+                      {label || "(unnamed)"}
+                    </text>
+                    <text x={c.x} y={c.y + 14} textAnchor="middle" className="map-ghost-meta">
+                      {ghost.vnums.map((v) => `#${v}`).join(" / ")}
+                      {!ghost.frontier && " · no exit known"}
+                    </text>
+                    <title>
+                      {`${ghost.direction} from room ${ghost.fromRoomId} — ` +
+                        (ghost.certain
+                          ? `${label}, which the agent has not found`
+                          : `one of: ${ghost.names.join(", ")}`) +
+                        (ghost.frontier
+                          ? ""
+                          : ". The agent does not know this exit exists — usually a closed door.")}
+                    </title>
+                  </g>
+                );
+              })}
           </svg>
 
-          {layout.nodes.map((node) => (
-            <MapNode
-              key={node.room.id}
-              node={node}
-              stubs={stubsByRoom.get(node.room.id) ?? []}
-              current={node.room.id === playerRoomId}
-              detailed={detailed}
-            />
-          ))}
+          {/* Nodes keep their own coordinates; the ghost offset is applied to
+              the layer, exactly as the SVG applies it to its viewBox. */}
+          <div className="knowledge-map-nodes" style={{ transform: `translate(${offsetX}px, ${offsetY}px)` }}>
+            {layout.nodes.map((node) => (
+              <MapNode
+                key={node.room.id}
+                node={node}
+                stubs={stubsByRoom.get(node.room.id) ?? []}
+                current={node.room.id === playerRoomId}
+                detailed={detailed}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
@@ -428,7 +611,18 @@ export default function KnowledgeMap() {
         <span className="map-key map-key-unwalked" /> known, never walked
         <span className="map-key map-key-lie" /> displaced or vertical
         <span className="map-key map-key-frontier" /> frontier
+        {truthOn && (
+          <>
+            <span className="map-key map-key-wrong" /> contradicted by the true world
+            <span className="map-key map-key-ghost" /> not found yet
+          </>
+        )}
         {playerRoomId == null && <span className="map-note">the agent does not know where it is</span>}
+        {overlayError && (
+          <span className="map-note" title={overlayError}>
+            the true world could not be read — the map above is unaffected
+          </span>
+        )}
       </p>
     </div>
   );
