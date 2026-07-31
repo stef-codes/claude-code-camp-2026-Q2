@@ -19,7 +19,19 @@ week0_explore/preview/data/world/
 .boukensha/knowledge.sqlite3-*
 .boukensha/sessions/
 .boukensha/journal/
-.boukensha/profiles/
+.boukensha/telnet/
+.boukensha/manager/
+
+# A profile's own runtime, per directory. `profile.yaml` itself is NOT ignored:
+# it is configuration, it holds no secret (the password comes from settings.yaml
+# or a named env var), and a working example of one is worth having in a repo
+# whose whole point is teaching.
+.boukensha/profiles/*/knowledge.sqlite3
+.boukensha/profiles/*/knowledge.sqlite3-*
+.boukensha/profiles/*/sessions/
+.boukensha/profiles/*/journal/
+.boukensha/profiles/*/telnet/
+.boukensha/profiles/*/manager/
 
 # Bundler installs into the project because /opt/homebrew's gem dir is not
 # writable here (`bundle config set --local path vendor/bundle`).
