@@ -10,3 +10,18 @@
 
 # generated CircleMUD world JSON (rebuild from infrastructure/lib/world via the parser)
 week0_explore/preview/data/world/
+
+# The agent's own runtime state. knowledge.sqlite3 is the map it EARNED by
+# walking; committing it would ship one machine's exploration as if it were
+# source, and the monitor reads it live. Sessions and the journal are its
+# append-only logs. All three are rebuilt by running the agent.
+.boukensha/knowledge.sqlite3
+.boukensha/knowledge.sqlite3-*
+.boukensha/sessions/
+.boukensha/journal/
+.boukensha/profiles/
+
+# Bundler installs into the project because /opt/homebrew's gem dir is not
+# writable here (`bundle config set --local path vendor/bundle`).
+**/vendor/bundle/
+.bundle/
