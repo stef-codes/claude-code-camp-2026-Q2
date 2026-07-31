@@ -8,7 +8,17 @@ require "boukensha"
 # The MCP tests need a real MCP server to spawn. The mud-manager daemon in the
 # week0_explore package is the one we have, so it plays the role of "some MCP
 # server" — the code under test knows nothing about it beyond command/args/env.
-MUD_MANAGER_ROOT = File.expand_path("../../../../week0_explore/mud_manager", __dir__)
+# THREE levels up, not four. `__dir__` is week2_capable/boukensha/test, so
+# ../../.. is the repo root; the fourth `..` landed one directory ABOVE the
+# checkout, where nothing exists. Every MCP test then hit the `skip` in
+# start_fake_mud and the suite reported 27 skips as if the sibling package
+# simply were not checked out.
+#
+# That silence is not free. The whole MCP integration surface — spawning a real
+# server, registering its tools, dispatching through a permission-scoped
+# dispatcher — went unexercised, which is how a lambda-arity bug that broke
+# EVERY logger-backed hook call reached a live REPL past a green suite.
+MUD_MANAGER_ROOT = File.expand_path("../../../week0_explore/mud_manager", __dir__)
 MUD_MANAGER_BIN  = File.join(MUD_MANAGER_ROOT, "bin", "mud-manager")
 MUD_MANAGER_LIB  = File.join(MUD_MANAGER_ROOT, "lib")
 
