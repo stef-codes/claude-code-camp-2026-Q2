@@ -70,6 +70,28 @@ class TestMcpServer < Minitest::Test
     assert_equal true, err["isError"]
   end
 
+  def test_navigate_is_not_a_daemon_tool_only_move_is
+    # Navigation (route → N moves) is composed agent-side by boukensha's
+    # Mud::Navigator, for the same reason the room survey is: the daemon exposes
+    # only primitives, so every consumer sees one flat surface and no policy
+    # about "what a route is" lives here. The MUD still gets one `move` per
+    # round trip no matter how far the agent walks.
+    pool = pool_for(@fake)
+    out = drive(MudManager::Mcp::Server, pool, [
+      { "jsonrpc" => "2.0", "id" => 1, "method" => "tools/list" }
+    ])
+    names = out.find { |m| m["id"] == 1 }["result"]["tools"].map { |t| t["name"] }
+
+    refute_includes names, "navigate", "the route composite must not be a daemon tool"
+    assert_includes names, "move", "the primitive it is built from must remain"
+
+    err = drive(MudManager::Mcp::Server, pool, [
+      { "id" => 2, "method" => "tools/call",
+        "params" => { "name" => "navigate", "arguments" => { "destination" => "Market Square" } } }
+    ]).find { |m| m["id"] == 2 }["result"]
+    assert_equal true, err["isError"]
+  end
+
   def test_bad_enum_is_structured_tool_error_not_jsonrpc_error
     pool = pool_for(@fake)
     out = drive(MudManager::Mcp::Server, pool, [

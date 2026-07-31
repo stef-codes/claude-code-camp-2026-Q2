@@ -225,9 +225,19 @@ module BoukenshaLoader
           nil
         end
 
-        hooks Boukensha::Mud::Hooks.new(
+        # Captured in a local as well as handed to `hooks`, because the
+        # `navigate` tool below has to reach the same instance — position lives
+        # on it, and a second Hooks would navigate from a different idea of
+        # where the agent is standing.
+        mud_hooks = Boukensha::Mud::Hooks.new(
           store: store,
           call_tool: call_tool,
+          # Its OWN dispatcher, under `tools.navigate.allow` — `move` only. The
+          # survey's allowlist grants no movement and the navigator's grants
+          # nothing else, so neither can borrow the other's reach.
+          navigate_call_tool: Boukensha.tool_dispatcher(
+            Boukensha::Mud::Navigator::NAME, logger: parent, initiator: "hook"
+          ),
           look_candidates: candidates,
           logger: parent,
           journal: journal,
@@ -236,6 +246,35 @@ module BoukenshaLoader
           # line, and a mitigation deserves to be watched before it is trusted.
           turn_policy: cfg.dig(:memory, :turn_policy) == true
         )
+        hooks mud_hooks
+
+        # The ONE composite the model can call, and the only native tool this
+        # deployment registers. It lives here rather than in lib/boukensha/
+        # because the framework ships no tools — and it is a native tool rather
+        # than a daemon one because the daemon exposes only primitives on
+        # purpose (mcp/dispatcher.rb). The MUD still sees one `move` per round
+        # trip; only the composition moved agent-side.
+        #
+        # It is registered only inside this begin/rescue: without a store there
+        # is no map, and a navigator with no map has nothing to route over. It
+        # simply does not appear, exactly as memory doesn't.
+        tool Boukensha::Mud::Navigator::NAME,
+             description:
+               "Walk to a room you have ALREADY found, using your own map. Give the " \
+               "room name exactly as it appears in your memory (or its id). Only rooms " \
+               "you have stood in can be routed to — if there is no route, the reply " \
+               "names the unexplored exits nearest you instead. Each step is a real " \
+               "move, so a blocked door or a dark room stops the walk partway and the " \
+               "reply says where you were left standing.",
+             parameters: {
+               destination: {
+                 type: "string",
+                 description: "The room name (or numeric room id) to walk to.",
+                 required: true
+               }
+             } do |destination:|
+          Boukensha::Mud::Navigator.render(mud_hooks.navigate(destination: destination))
+        end
       rescue Boukensha::Mud::Memory::Store::Unavailable => e
         # No memory is a degraded agent, not a dead one: it explores exactly as
         # it did before this feature existed.

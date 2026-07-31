@@ -865,4 +865,90 @@ class TestMudHooks < Minitest::Test
     # no raise ⇒ pass; the store still got its snapshot
     refute_nil @store.player[:level]
   end
+
+  # --- navigate --------------------------------------------------------------
+
+  # Walk the agent into two rooms so there is a map with a walked edge in it,
+  # and leave it standing in the second. Returns [hooks, fake, first_id].
+  def walked_two_rooms
+    h, fake = hooks_for(COMMON_SQUARE)
+    c = ctx
+    h.before_tools(calls: [], context: c)
+    h.before_model(context: c)                    # cold look ⇒ resolves room 1
+    first = @store.player[:current_room_id]
+    walk(h, fake, c, "north", MARKET_SQUARE)      # ⇒ resolves room 2, links the edge
+    [h, fake, first, c]
+  end
+
+  # THE invariant that makes navigation cheap. `navigate` resolves position on
+  # every step through the same seam a model-issued move does, so by the time
+  # the turn continues the hook already knows where it is — and `before_model`
+  # must not spend a `look` re-confirming it. If this regresses, every
+  # navigation quietly costs one extra MUD round trip.
+  def test_after_navigating_the_next_before_model_spends_no_mud_calls
+    h, fake, first, c = walked_two_rooms
+    second = @store.player[:current_room_id]
+    refute_equal first, second, "the walk actually moved us"
+
+    fake.responses = MARKET_SQUARE
+    fake.calls.clear
+    h.before_model(context: c)
+
+    assert_empty fake.tools_called,
+                 "position was already resolved; re-confirming it is pure waste"
+  end
+
+  # `navigate` is deliberately NOT in MOVEMENT_TOOLS: movement_outcome would try
+  # to parse its one-line summary as a room and stash a garbage @arrival, which
+  # the next before_model would then resolve position against.
+  def test_after_tool_does_not_treat_a_navigate_result_as_movement
+    h, fake, _first, c = walked_two_rooms
+    before = @store.player[:current_room_id]
+
+    fake.calls.clear
+    out = h.after_tool(name: "navigate", args: { "destination" => "Market Square" },
+                       result: "navigate → Market Square (#2): 1 of 1 · north", context: c)
+    h.before_model(context: c)
+
+    assert_nil out, "a navigate result is passed through untouched, not restated"
+    assert_equal before, @store.player[:current_room_id],
+                 "the summary line must never be parsed as an arrival"
+  end
+
+  # Cold means cold. With no position there is no source node, and a route from
+  # a guessed start is worse than no route at all.
+  def test_navigate_refuses_while_the_agent_does_not_know_where_it_is
+    h, fake = hooks_for(COMMON_SQUARE)
+    fake.calls.clear
+
+    result = h.navigate(destination: "Market Square")
+
+    refute result[:ok]
+    assert_equal :no_position, result[:reason]
+    assert_empty fake.tools_called, "it cannot plan, so it must not walk"
+  end
+
+  # The map is the agent's own, so a destination it has never stood in is not
+  # routable — and the reply says so rather than wandering hopefully.
+  def test_navigate_reports_a_destination_that_is_not_in_the_map
+    h, = walked_two_rooms
+
+    result = h.navigate(destination: "The Cozy Bakery")
+
+    refute result[:ok]
+    assert_equal :unknown_destination, result[:reason]
+  end
+
+  # Routing to where it already stands is free and honest.
+  def test_navigate_to_the_current_room_walks_nowhere
+    h, fake, = walked_two_rooms
+    here = @store.room(@store.player[:current_room_id])[:name]
+    fake.calls.clear
+
+    result = h.navigate(destination: here)
+
+    assert result[:ok]
+    assert_equal :already_here, result[:reason]
+    assert_empty fake.tools_called
+  end
 end

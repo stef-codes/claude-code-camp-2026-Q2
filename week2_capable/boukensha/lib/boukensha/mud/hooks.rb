@@ -72,7 +72,13 @@ module Boukensha
       # `call_tool` is the permission-scoped dispatcher for the hook's own slice
       # (`tools.room_survey.allow`) — a SEPARATE Registry from the player's, so
       # the poll and look below can never re-enter after_tool and recurse.
-      def initialize(store:, call_tool:, look_candidates: nil, logger: nil, journal: nil,
+      # `navigate_call_tool:` is a SECOND dispatcher, deliberately. The survey's
+      # allowlist grants look/check/consider/examine and no movement; the
+      # navigator's grants `move` and nothing else. Sharing one lambda would
+      # mean whichever allowlist is wider silently governs both. Defaults to
+      # `call_tool` so a test can inject one fake and drive everything.
+      def initialize(store:, call_tool:, navigate_call_tool: nil, look_candidates: nil,
+                     logger: nil, journal: nil,
                      prefix: "tbamud__", turn_policy: false, warn_to: $stderr)
         @store     = store
         @call_tool = call_tool
@@ -94,6 +100,14 @@ module Boukensha
         @survey = RoomSurvey.new(call_tool: call_tool, look_candidates: look_candidates,
                                  entities: store, prefix: prefix, warn_to: warn_to,
                                  logger: logger)
+
+        # Navigation, under its own `navigate` allowlist and its own span. It
+        # walks and verifies; `navigator_arrival` below is the only place it can
+        # learn which room it landed in, so position stays this class's property
+        # exactly as it is for a move the model made itself.
+        @navigator = Navigator.new(call_tool: navigate_call_tool || call_tool,
+                                   store: store, prefix: prefix,
+                                   logger: logger, on_arrival: method(:navigator_arrival))
 
         # Per-iteration scratch, reset as it is consumed.
         @pending_events = []
@@ -218,7 +232,48 @@ module Boukensha
         nil
       end
 
+      # ---------- navigate ---------------------------------------------------
+
+      # Walk to a room the agent has already found. Called by the native
+      # `navigate` tool registered in boukensha_loader.rb — the one composite
+      # the model can reach, because a destination cannot be inferred from the
+      # world the way "a room we have never stood in" can.
+      #
+      # Refuses while cold rather than guessing: with no `@current_room_id`
+      # there is no source node, and a route from a guess is worse than no
+      # route. `before_model`'s `cold_look` fixes that on the next iteration.
+      def navigate(destination:)
+        guard do
+          unless @current_room_id
+            next { ok: false, reason: :no_position, destination: destination }
+          end
+
+          @navigator.navigate(destination: destination, from: @current_room_id)
+        end
+      end
+
       private
+
+      # The Navigator's arrival callback, and the whole reason it never decides
+      # for itself where it is.
+      #
+      # `absorb_mud_text` is called EXPLICITLY here, and it is the trap in this
+      # whole feature: the Navigator's moves go through
+      # `Boukensha.tool_dispatcher`'s separate Registry, which has no hooks
+      # installed — so `after_tool` never fires for them. Without this line a
+      # twelve-step walk would silently discard every HP reading, every
+      # level-up, every `The cityguard leaves east`, and a death mid-route would
+      # go unnoticed.
+      def navigator_arrival(look, from_id, direction, text = nil)
+        absorb_mud_text(text)
+        @pending_arrival_edge = { from: from_id, direction: direction }
+        # Movement text is an index key, never a record: `run_command` drains
+        # the buffer before sending, so this room is as it was after an
+        # unobserved amount of history. Same rule `arrival_look` follows.
+        @look_is_fresh = false
+        resolve_position(look)
+        @current_room_id
+      end
 
       # =========================== position =================================
 
@@ -543,9 +598,13 @@ module Boukensha
           close_fight("won", RoomParser.parse_prompt(text)&.[](:hp))
         elsif local == "flee" && text =~ FLED
           close_fight("fled", RoomParser.parse_prompt(text)&.[](:hp))
-        elsif MOVEMENT_TOOLS.include?(local)
+        elsif MOVEMENT_TOOLS.include?(local) || local == Navigator::NAME
           # Walked away mid-fight. Not a defeat, but not a win either, and the
-          # agent should be able to tell the difference later.
+          # agent should be able to tell the difference later. `navigate` counts
+          # for the same reason a `move` does — it is several moves — but it is
+          # deliberately NOT in MOVEMENT_TOOLS, because `movement_outcome` would
+          # try to parse its summary line as a room and set `@arrival` to
+          # garbage.
           close_fight("abandoned", RoomParser.parse_prompt(text)&.[](:hp))
         end
       end
