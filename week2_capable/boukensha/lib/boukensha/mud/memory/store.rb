@@ -342,8 +342,11 @@ module Boukensha
         # through. Callers wanting the frontier ask for it by name.
         def linked_exits
           @db.execute(
-            "SELECT room_id, direction, target_room_id FROM room_exits " \
-            "WHERE target_room_id IS NOT NULL ORDER BY room_id, direction"
+            "SELECT room_id, direction, target_room_id, " \
+            "COALESCE(failure_count, 0) AS failure_count, " \
+            "COALESCE(danger, 0) AS danger, " \
+            "COALESCE(traversals, 0) AS traversals " \
+            "FROM room_exits WHERE target_room_id IS NOT NULL ORDER BY room_id, direction"
           ).map { |r| row(r) }
         end
 
@@ -362,6 +365,29 @@ module Boukensha
 
           row(@db.execute("SELECT * FROM room_exits WHERE room_id = ? AND direction = ?",
                           [room_id, direction.to_s]).first)
+        end
+
+        # A blocked / locked / interrupted walk on this edge. Caps so a single
+        # cursed door cannot dominate the whole graph forever.
+        def record_exit_failure!(room_id, direction, cap: 20)
+          return unless room_id && direction
+
+          @db.execute(
+            "UPDATE room_exits SET failure_count = MIN(COALESCE(failure_count, 0) + 1, ?) " \
+            "WHERE room_id = ? AND direction = ?",
+            [cap, room_id, direction.to_s]
+          )
+          jevent("exit", "failure", room_id: room_id, direction: direction.to_s)
+        end
+
+        def set_exit_danger!(room_id, direction, danger)
+          return unless room_id && direction
+
+          @db.execute(
+            "UPDATE room_exits SET danger = ? WHERE room_id = ? AND direction = ?",
+            [danger.to_f, room_id, direction.to_s]
+          )
+          jupsert("exit", "#{room_id}:#{direction}:danger", danger.to_f)
         end
 
         # Record what the room says its exits are. `dirs` is the free autoexit

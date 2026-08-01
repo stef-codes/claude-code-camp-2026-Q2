@@ -152,6 +152,7 @@ module Boukensha
           # name plus an exits line plus a prompt, so all of them stop the walk
           # without this class knowing a single MUD string.
           unless look.complete?
+            @store.record_exit_failure!(current, direction) if @store.respond_to?(:record_exit_failure!)
             return result(route, from: from, destination: destination, ok: false,
                           reason: :blocked, steps_walked: walked.length, path: walked,
                           stopped_at: current, blocked_by: refusal(text), replans: replans)

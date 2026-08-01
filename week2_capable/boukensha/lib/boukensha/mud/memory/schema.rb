@@ -215,7 +215,15 @@ module Boukensha
           CREATE INDEX idx_items_location ON player_items(location);
         SQL
 
-        MIGRATIONS = [V1, V2].freeze
+        # Edge costs for weighted routing (week_2_plan Phase 7). failure_count
+        # increments on blocked/locked/interrupted walks; danger is an operator-
+        # or encounter-set penalty. RouteFinder folds both into Dijkstra costs.
+        V3 = <<~SQL.freeze
+          ALTER TABLE room_exits ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE room_exits ADD COLUMN danger REAL NOT NULL DEFAULT 0;
+        SQL
+
+        MIGRATIONS = [V1, V2, V3].freeze
 
         LATEST_VERSION = MIGRATIONS.size
 

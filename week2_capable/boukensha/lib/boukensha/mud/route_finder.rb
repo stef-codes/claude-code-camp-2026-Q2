@@ -77,26 +77,37 @@ module Boukensha
       # A→B while B→A fails is a true statement about what the agent has walked.
       # Inferring the reverse would be inventing knowledge, which is the one
       # thing this whole memory design refuses to do.
+      #
+      # Costs (week_2_plan Phase 7): `1 + danger*5 + failure_rate*3`. Hop count
+      # still caps the search (`max_steps`); cost only breaks ties / prefers
+      # safer edges among reachable paths.
       def search(from, goal_ids, max_steps)
         adjacency = adjacency_list
         targets   = goal_ids.to_a
         # prev[room] = [previous_room, direction_taken]
         prev  = { from => nil }
-        queue = [from]
+        cost  = { from => 0.0 }
         depth = { from => 0 }
+        # Priority queue as a sorted array — maps are small (agent's own rooms).
+        queue = [from]
 
         until queue.empty?
+          queue.sort_by! { |n| cost[n] }
           current = queue.shift
+          return unwind(prev, from, current) if targets.include?(current) && current != from
           next if depth[current] >= max_steps
 
-          adjacency.fetch(current, EMPTY).each do |direction, target|
-            next if prev.key?(target)
+          adjacency.fetch(current, EMPTY).each do |direction, target, edge_cost|
+            next_depth = depth[current] + 1
+            next if next_depth > max_steps
+
+            next_cost = cost[current] + edge_cost
+            next if cost.key?(target) && cost[target] <= next_cost
 
             prev[target]  = [current, direction]
-            depth[target] = depth[current] + 1
-            return unwind(prev, from, target) if targets.include?(target)
-
-            queue << target
+            cost[target]  = next_cost
+            depth[target] = next_depth
+            queue << target unless queue.include?(target)
           end
         end
         nil
@@ -112,7 +123,7 @@ module Boukensha
         queue = [from]
         until queue.empty?
           current = queue.shift
-          adjacency.fetch(current, EMPTY).each do |_direction, target|
+          adjacency.fetch(current, EMPTY).each do |_direction, target, _cost|
             next if seen.key?(target)
             return true if goal_ids.include?(target)
 
@@ -137,7 +148,7 @@ module Boukensha
       end
 
       # One query for the whole graph (Store#linked_exits), folded into
-      # `{ room_id => [[direction, target], …] }` with each list in a fixed
+      # `{ room_id => [[direction, target, cost], …] }` with each list in a fixed
       # order. Determinism matters: a route is recomputed after a surprise
       # mid-walk, and a caller watching the agent must not see it pick a
       # different equally-short path on the replan.
@@ -146,8 +157,18 @@ module Boukensha
           direction = exit[:direction].to_s
           next unless WALKABLE.include?(direction)
 
-          (out[exit[:room_id]] ||= []) << [direction, exit[:target_room_id]]
+          (out[exit[:room_id]] ||= []) << [direction, exit[:target_room_id], edge_cost(exit)]
         end.each_value { |edges| edges.sort_by!(&:first) }
+      end
+
+      # week_2_plan: `1 + danger*5 + failure_rate*3`.
+      def edge_cost(exit)
+        failures   = exit[:failure_count].to_i
+        traversals = exit[:traversals].to_i
+        danger     = exit[:danger].to_f
+        attempts   = failures + traversals
+        rate       = attempts.zero? ? 0.0 : failures.to_f / attempts
+        1.0 + (danger * 5.0) + (rate * 3.0)
       end
 
       # TRAP 2 — duplicate rooms are load-bearing, not corruption. When more than

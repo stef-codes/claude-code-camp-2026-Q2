@@ -201,9 +201,9 @@ class TestMemoryStore < Minitest::Test
   # --- V2: the player half ---------------------------------------------------
 
   # The guarantee the whole additive-DDL doctrine rests on. A file written by an
-  # older build must reach V2 with every existing row intact — if V2 ever has to
-  # rewrite a table to land, the monitor attaching this file read-only is the
-  # thing that breaks.
+  # older build must reach LATEST_VERSION with every existing row intact — if a
+  # migration ever has to rewrite a table to land, the monitor attaching this
+  # file read-only is the thing that breaks.
   def test_a_v1_file_migrates_forward_with_every_row_intact
     # A genuine V1 file: only V1's DDL has ever run against it.
     db = SQLite3::Database.new(":memory:")
@@ -217,9 +217,9 @@ class TestMemoryStore < Minitest::Test
     old.record_exits!(id, dirs: %w[north])
     old.update_player!(current_room_id: id, hp: 19, level: 10)
 
-    assert_equal 2, M::Schema::LATEST_VERSION, "V2 is appended, never edited into V1"
-    assert_equal 2, M::Schema.migrate!(db)
-    assert_equal 2, db.get_first_value("PRAGMA user_version")
+    assert_equal 3, M::Schema::LATEST_VERSION, "migrations are appended, never edited into earlier ones"
+    assert_equal 3, M::Schema.migrate!(db)
+    assert_equal 3, db.get_first_value("PRAGMA user_version")
 
     # Every V1 row survived.
     assert_equal "Market Square", old.room(id)[:name]
@@ -229,6 +229,10 @@ class TestMemoryStore < Minitest::Test
     # is nil, never a zero that would render as a real value.
     assert_nil old.player[:max_mana]
     assert_equal({ skills: 0, items: 0 }, old.stats.slice(:skills, :items))
+    # V3 edge-cost columns exist with defaults.
+    edge = old.exit_at(id, "north")
+    assert_equal 0, edge[:failure_count]
+    assert_equal 0.0, edge[:danger].to_f
     db.close
   end
 
