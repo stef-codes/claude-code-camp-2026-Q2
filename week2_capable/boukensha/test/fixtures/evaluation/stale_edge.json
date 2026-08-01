@@ -1,0 +1,14 @@
+{
+  "_comment": [
+    "Step one goes north and lands in Back Alley, not the Main Street the map",
+    "promised. Hooks#resolve_position recognises Back Alley by its weak",
+    "fingerprint, link_arrival demotes the edge that lied, and the Navigator",
+    "replans from where it really is."
+  ],
+  "responses": {
+    "look": [{ "room": "Town Square" }],
+    "poll": "",
+    "move:north": [{ "room": "Back Alley" }],
+    "move:south": [{ "room": "The Cozy Bakery" }]
+  }
+}

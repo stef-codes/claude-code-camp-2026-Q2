@@ -1,0 +1,50 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Run one deterministic scenario against the real agent, offline.
+#
+#   bin/boukensha-eval scenarios/navigation/known_route.yaml
+#   bin/boukensha-eval scenarios/navigation/known_route.yaml --json
+#   bin/boukensha-eval scenarios/navigation/known_route.yaml --output tmp/result.json
+#
+# Exit codes, because this is meant to run in CI:
+#
+#   0  every assertion held
+#   1  the scenario ran and failed — an agent result
+#   2  the scenario or its fixture is invalid — a scenario problem
+#
+# The 1/2 split is the point. A typo in a fixture and a genuine regression must
+# never look the same to whatever is reading the exit code.
+
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+
+require "boukensha"
+require "boukensha/evaluation"
+
+json    = ARGV.delete("--json")
+output  = (i = ARGV.index("--output")) ? ARGV.slice!(i, 2).last : nil
+path    = ARGV.shift
+
+if path.nil?
+  warn "usage: boukensha-eval <scenario.yaml> [--json] [--output FILE]"
+  exit 2
+end
+
+begin
+  result = Boukensha::Evaluation.run(path)
+rescue Boukensha::Evaluation::Scenario::Invalid,
+       Boukensha::Evaluation::Runner::Invalid,
+       Boukensha::Evaluation::TranscriptDriver::UnexpectedCall => e
+  warn "boukensha-eval: #{e.message}"
+  exit 2
+end
+
+if output
+  require "fileutils"
+  FileUtils.mkdir_p(File.dirname(output))
+  File.write(output, "#{result.to_json}\n")
+  warn "wrote #{output}"
+end
+
+puts(json ? result.to_json : result.to_s)
+exit(result.passed ? 0 : 1)

@@ -1,0 +1,55 @@
+version: 1
+id: known_route_to_bakery
+description: >
+  The route is already in memory. The agent should walk it exactly, spend one
+  round trip per step, and spend nothing on anything else.
+
+# A room declared here produces BOTH the memory the agent starts with and the
+# text the MUD replies with, so the two cannot drift apart. Rooms are seeded as
+# already-surveyed, which is the premise of "a route you already know" — a
+# revisit spends no round trips, so the transcript needs only the cold look and
+# one entry per move.
+initial_state:
+  start: Town Square
+  rooms:
+    - name: Town Square
+      description: A wide cobbled square, worn smooth by traffic.
+      exits: [north, east]
+    - name: Main Street
+      description: A broad street running east towards the smell of bread.
+      exits: [south, east]
+    - name: The Cozy Bakery
+      description: Ovens line the back wall and the air is warm with flour.
+      exits: [west]
+  edges:
+    - [Town Square, north, Main Street]
+    - [Main Street, east, The Cozy Bakery]
+    - [The Cozy Bakery, west, Main Street]
+    - [Main Street, south, Town Square]
+
+driver:
+  type: transcript
+  fixture: ../../test/fixtures/evaluation/known_route.json
+
+action:
+  type: navigate
+  destination: The Cozy Bakery
+
+limits:
+  max_commands: 10
+
+assertions:
+  navigation_ok: true
+  reason: arrived
+  reached_room: The Cozy Bakery
+  steps_eq: 2
+  replans_eq: 0
+  # Two moves and nothing else. The navigate allowlist grants `move` alone, so
+  # a `look` appearing here would mean the walk had started paying for
+  # information the memory layer exists to have already.
+  tool_calls_lte: 2
+  deaths: 0
+
+scoring:
+  required: [navigation_ok, reached_room]
+  expected_steps: 2

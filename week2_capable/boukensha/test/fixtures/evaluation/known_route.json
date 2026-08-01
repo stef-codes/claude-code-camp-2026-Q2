@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Keyed by tool plus the argument that discriminates, never a flat ordered",
+    "queue — see TranscriptDriver. {room: X} renders X's text from the",
+    "scenario's own declaration of it, so the fixture and the seeded map cannot",
+    "disagree about what a room looks like.",
+    "",
+    "`poll` is a bare string: a standing answer, returned however often it is",
+    "asked. An empty buffer is the honest reply and there is nothing ordered",
+    "about it."
+  ],
+  "responses": {
+    "look": [{ "room": "Town Square" }],
+    "poll": "",
+    "move:north": [{ "room": "Main Street" }],
+    "move:east": [{ "room": "The Cozy Bakery" }]
+  }
+}

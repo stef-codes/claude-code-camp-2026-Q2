@@ -13,11 +13,16 @@ Gem::Specification.new do |spec|
 
   spec.required_ruby_version = ">= 3.0"
 
-  # All files tracked in git, plus the bin/ executable.
-  spec.files = Dir["lib/**/*.rb"] + ["bin/boukensha"]
+  # All files tracked in git, plus the bin/ executables. Evaluation scenarios
+  # ship as data the evaluator reads at runtime, and their transcript fixtures
+  # ship with them — a scenario without its fixture cannot run, which is why
+  # these two lines have to move together.
+  spec.files = Dir["lib/**/*.rb"] + Dir["scenarios/**/*.yaml"] +
+               Dir["test/fixtures/evaluation/*.json"] +
+               ["bin/boukensha", "bin/boukensha-dataset", "bin/boukensha-eval"]
 
   spec.bindir      = "bin"
-  spec.executables = ["boukensha"]
+  spec.executables = ["boukensha", "boukensha-dataset", "boukensha-eval"]
 
   # MCP servers bring their own dependencies; boukensha itself needs only
   # `charm`, for the TUI (bubbletea + lipgloss + bubbles bindings).

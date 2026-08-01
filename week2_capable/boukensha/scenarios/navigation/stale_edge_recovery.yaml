@@ -1,0 +1,67 @@
+version: 1
+id: stale_edge_triggers_one_replan
+description: >
+  The stored map says north leads to Main Street; walking it lands in Back
+  Alley. The edge must be repaired from the truth, the route replanned once,
+  and the goal still reached — a stale edge is recoverable, not fatal.
+
+initial_state:
+  start: Town Square
+  rooms:
+    - name: Town Square
+      description: A wide cobbled square, worn smooth by traffic.
+      exits: [north, east]
+    - name: Main Street
+      description: A broad street running east towards the smell of bread.
+      exits: [south, east]
+    - name: Back Alley
+      description: A narrow alley behind the shops, smelling of yeast.
+      exits: [north, south]
+    - name: The Cozy Bakery
+      description: Ovens line the back wall and the air is warm with flour.
+      exits: [west, north]
+  edges:
+    # The lie: memory believes north from the square reaches Main Street.
+    - [Town Square, north, Main Street]
+    - [Main Street, east, The Cozy Bakery]
+    - [Main Street, south, Town Square]
+    # The way on from where the agent will actually land.
+    - [Back Alley, south, The Cozy Bakery]
+    - [The Cozy Bakery, north, Back Alley]
+    - [The Cozy Bakery, west, Main Street]
+
+driver:
+  type: transcript
+  fixture: ../../test/fixtures/evaluation/stale_edge.json
+
+action:
+  type: navigate
+  destination: The Cozy Bakery
+
+limits:
+  max_commands: 10
+  # Not injected into the Navigator — asserted against it. A scenario that
+  # supplied the bound would still pass after someone raised
+  # Navigator::DEFAULT_MAX_REPLANS, which is exactly the regression this is
+  # here to catch.
+  max_replans: 1
+
+assertions:
+  navigation_ok: true
+  reason: arrived
+  reached_room: The Cozy Bakery
+  # One surprise, one replan. Two would mean the map is unreliable enough that
+  # continuing is guessing.
+  replans_eq: 1
+  steps_eq: 2
+  # The repair itself: Hooks#link_arrival demoted the edge that lied before the
+  # Navigator ever noticed it was lost, so walking a bad route fixes it.
+  edge_repaired:
+    room: Town Square
+    direction: north
+  deaths: 0
+
+scoring:
+  required: [navigation_ok, reached_room]
+  recovery: [edge_repaired, replans_eq]
+  expected_steps: 2

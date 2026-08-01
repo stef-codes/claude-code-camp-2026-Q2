@@ -71,7 +71,11 @@
       "WebFetch(domain:api.reference.langfuse.com)",
       "Bash(BOUKENSHA_DIR=/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha bundle exec ruby -Ilib -e ' *)",
       "Bash(chmod +x bin/boukensha-dataset)",
-      "Bash(BOUKENSHA_DIR=/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha bundle exec ruby bin/boukensha-dataset --profile dummy)"
+      "Bash(BOUKENSHA_DIR=/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha bundle exec ruby bin/boukensha-dataset --profile dummy)",
+      "Bash(ruby -rjson -e 'j=JSON.parse\\(File.read\\(\"test/fixtures/mud_transcripts.json\"\\)\\); puts j.keys.inspect; puts j[\"common_square\"].inspect[0,600]')",
+      "Bash(chmod +x bin/boukensha-eval)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(set -e)"
     ],
     "additionalDirectories": [
       "/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha/sessions",
