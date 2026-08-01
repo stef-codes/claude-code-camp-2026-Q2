@@ -1,0 +1,48 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Promote failed turns from the session logs into a Langfuse dataset.
+#
+#   bin/boukensha-dataset --profile dummy            # what would be pushed
+#   bin/boukensha-dataset --profile dummy --push     # actually push
+#
+# Dry run by default, deliberately: this writes to a shared Langfuse project,
+# and "show me first" is the right default for anything that does.
+
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+
+require "boukensha_loader"
+BoukenshaLoader.resolve_profile!
+require "boukensha"
+
+push    = ARGV.delete("--push")
+dataset = (i = ARGV.index("--dataset")) ? ARGV.slice!(i, 2).last : nil
+dataset ||= Boukensha::Telemetry::DatasetExport::DEFAULT_DATASET
+
+sessions = Dir[File.join(Boukensha.config.profile_dir, "sessions", "*.jsonl")].sort
+items    = Boukensha::Telemetry::DatasetExport.candidates(sessions)
+
+puts "sessions scanned : #{sessions.length}"
+puts "failed turns     : #{items.length}"
+items.group_by(&:reason).sort_by { |_, v| -v.length }.each do |reason, group|
+  puts format("  %-24s %d", reason, group.length)
+end
+
+if items.empty?
+  puts "\nNothing to promote — no failing turns in these sessions."
+  exit 0
+end
+
+unless push
+  puts "\nDry run. Re-run with --push to send these to dataset #{dataset.inspect}."
+  items.first(5).each do |item|
+    puts format("  [%s] %s — %s", item.reason, item.input.to_s[0, 48].inspect, item.comment)
+  end
+  exit 0
+end
+
+exporter = Boukensha::Telemetry::DatasetExport.from_env
+abort "boukensha: no Langfuse credentials in the environment" unless exporter
+
+sent = exporter.push(items, dataset: dataset)
+puts "\npushed #{sent}/#{items.length} items to dataset #{dataset.inspect}"

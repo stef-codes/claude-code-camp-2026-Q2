@@ -4,6 +4,7 @@ require_relative "telemetry/noop"
 # there are no credentials.
 require_relative "telemetry/langfuse"
 require_relative "telemetry/prompt_registry"
+require_relative "telemetry/dataset_export"
 
 module Boukensha
   module Telemetry

@@ -221,6 +221,63 @@ class TestLangfuseAttributes < Minitest::Test
     def fetch(_name) = prompt
   end
 
+  # ---------- dataset export ----------------------------------------------
+
+  # The eval set accumulates for free from normal working — but only if
+  # selection stays narrow. A dataset of everything is a log, not a dataset.
+  D = Boukensha::Telemetry::DatasetExport
+
+  def session_fixture(records)
+    file = File.join(Dir.mktmpdir, "s.jsonl")
+    File.write(file, records.map { |r| JSON.generate(r) }.join("\n"))
+    file
+  end
+
+  def test_only_failing_turns_are_promoted
+    path = session_fixture([
+      { phase: "prompt", messages: [ { role: "user", content: "go to the bakery" } ] },
+      { phase: "score", name: "position.known", value: 1, session_id: "s", trace_id: "t" },
+      { phase: "score", name: "navigate.arrived", value: 0, comment: "no_route", session_id: "s", trace_id: "t" },
+      { phase: "score", name: "localization.candidates", value: 0, session_id: "s", trace_id: "t" }
+    ])
+
+    items = D.candidates([ path ])
+    assert_equal [ "navigate.arrived" ], items.map(&:reason)
+    assert_equal "go to the bakery", items.first.input
+    assert_equal "t", items.first.trace_id, "an item must link back to the trace that produced it"
+  end
+
+  def test_ambiguous_localization_counts_as_a_failure
+    path = session_fixture([
+      { phase: "prompt", messages: [ { role: "user", content: "where am I" } ] },
+      { phase: "score", name: "localization.candidates", value: 3, session_id: "s", trace_id: "t" }
+    ])
+
+    assert_equal [ "localization.candidates" ], D.candidates([ path ]).map(&:reason)
+  end
+
+  # The injected state block arrives as a user message too. Replaying it as an
+  # instruction would produce an eval case that tests nothing.
+  def test_the_injected_state_block_is_never_used_as_the_instruction
+    path = session_fixture([
+      { phase: "prompt", messages: [
+        { role: "user", content: "find the bakery" },
+        { role: "user", content: "[here] The Bazaar (visit 5)\nexits: east→…" }
+      ] },
+      { phase: "score", name: "navigate.arrived", value: 0, session_id: "s", trace_id: "t" }
+    ])
+
+    assert_equal "find the bakery", D.candidates([ path ]).first.input
+  end
+
+  def test_a_missing_or_corrupt_session_is_skipped_not_fatal
+    assert_empty D.candidates([ "/nonexistent/session.jsonl" ])
+
+    path = File.join(Dir.mktmpdir, "bad.jsonl")
+    File.write(path, "{not json\n")
+    assert_empty D.candidates([ path ])
+  end
+
   class ScoreRecorder
     attr_reader :scores
 
