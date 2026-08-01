@@ -9,8 +9,9 @@ module Boukensha
     #   2. ~/.boukensha  (default)
     DEFAULT_DIR = File.join(Dir.home, ".boukensha").freeze
 
-    # Default prompts shipped alongside this step.
-    PROMPTS_DIR = File.expand_path("../../../prompts", __dir__).freeze
+    # Default prompts shipped alongside this gem (`boukensha/prompts/`).
+    # `__dir__` is `lib/boukensha/`, so one `../..` reaches the gem root.
+    PROMPTS_DIR = File.expand_path("../../prompts", __dir__).freeze
 
     attr_reader :root_dir, :profile_dir, :profile, :settings
 
