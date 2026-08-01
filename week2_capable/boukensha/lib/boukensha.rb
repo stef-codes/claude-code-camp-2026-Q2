@@ -62,7 +62,8 @@ module Boukensha
     cfg           = config                           # loads .env; populates ENV
     task_class    = Tasks::Player
     task_settings = cfg.tasks(task_class.task_name)
-    system      ||= task_class.system_prompt(task_settings, user_prompts_dir: cfg.user_prompts_dir, default_prompts_dir: Config::PROMPTS_DIR)
+    prompt_registry = Telemetry::PromptRegistry.from_env(enabled: cfg.langfuse_prompts_enabled?)
+    system      ||= task_class.system_prompt(task_settings, user_prompts_dir: cfg.user_prompts_dir, default_prompts_dir: Config::PROMPTS_DIR, registry: prompt_registry)
     model       ||= task_class.model(task_settings)
     backend     ||= task_class.provider(task_settings).to_sym
     context_window ||= Models.context_window(model)
@@ -100,7 +101,7 @@ module Boukensha
     builder = PromptBuilder.new(ctx, be)
     client  = Client.new(builder)
     agent   = Agent.new(context: ctx, registry: registry, builder: builder, client: client, logger: logger,
-                        hooks: hooks,
+                        hooks: hooks, prompt_source: task_class.last_prompt_source,
                         max_iterations: cfg.agent_max_iterations,
                         max_turn_tokens: cfg.agent_max_turn_tokens,
                         max_output_tokens: (max_output_tokens || cfg.agent_max_output_tokens))
@@ -132,7 +133,8 @@ module Boukensha
     cfg           = config                           # loads .env; populates ENV
     task_class    = Tasks::Player
     task_settings = cfg.tasks(task_class.task_name)
-    system      ||= task_class.system_prompt(task_settings, user_prompts_dir: cfg.user_prompts_dir, default_prompts_dir: Config::PROMPTS_DIR)
+    prompt_registry = Telemetry::PromptRegistry.from_env(enabled: cfg.langfuse_prompts_enabled?)
+    system      ||= task_class.system_prompt(task_settings, user_prompts_dir: cfg.user_prompts_dir, default_prompts_dir: Config::PROMPTS_DIR, registry: prompt_registry)
     model       ||= task_class.model(task_settings)
     backend     ||= task_class.provider(task_settings).to_sym
     context_window ||= Models.context_window(model)
@@ -181,7 +183,8 @@ module Boukensha
       model:      model,
       version:    VERSION,
       api_key:    api_key,
-      servers:    servers
+      servers:    servers,
+      prompt_source: task_class.last_prompt_source
     )
 
     if tui && defined?(Tui)
@@ -244,7 +247,8 @@ module Boukensha
   def self.run_task(task_class, input, log: nil, logger: nil, hooks: nil, max_output_tokens: nil, ollama_host: "http://localhost:11434")
     cfg            = config
     task_settings  = cfg.tasks(task_class.task_name)
-    system         = task_class.system_prompt(task_settings, user_prompts_dir: cfg.user_prompts_dir, default_prompts_dir: Config::PROMPTS_DIR)
+    prompt_registry = Telemetry::PromptRegistry.from_env(enabled: cfg.langfuse_prompts_enabled?)
+    system         = task_class.system_prompt(task_settings, user_prompts_dir: cfg.user_prompts_dir, default_prompts_dir: Config::PROMPTS_DIR, registry: prompt_registry)
     model          = task_class.model(task_settings)
     backend        = task_class.provider(task_settings).to_sym
     context_window = Models.context_window(model)
@@ -273,7 +277,7 @@ module Boukensha
     logger   ||= Logger.new(log: log, task: task_class.task_name,
                             telemetry: Telemetry.build(config: cfg), snapshot: run_snapshot)
     agent      = Agent.new(context: ctx, registry: registry, builder: builder, client: client, logger: logger,
-                           hooks: hooks,
+                           hooks: hooks, prompt_source: task_class.last_prompt_source,
                            max_iterations: max_iters, max_turn_tokens: cfg.agent_max_turn_tokens,
                            max_output_tokens: max_out, root_trace: own_logger)
 

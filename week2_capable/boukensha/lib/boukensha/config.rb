@@ -121,6 +121,15 @@ module Boukensha
       env_boolean("BOUKENSHA_OTEL_ENABLED", dig(:observability, :otel, :enabled), false)
     end
 
+    # Off by default, and deliberately a separate switch from `otel.enabled`:
+    # tracing is passive, whereas this puts a network call in front of the first
+    # model call of every process. Opt in when you want prompts managed
+    # centrally; leave it off and prompt resolution is exactly the file lookup
+    # it has always been.
+    def langfuse_prompts_enabled?
+      env_boolean("BOUKENSHA_LANGFUSE_PROMPTS", dig(:observability, :prompts, :enabled), false)
+    end
+
     def otel_capture_content?
       env_boolean("BOUKENSHA_OTEL_CAPTURE_CONTENT",
                   dig(:observability, :otel, :capture_content), false)

@@ -3,6 +3,7 @@ require_relative "telemetry/noop"
 # the otel gems — so this is required unconditionally, and disables itself when
 # there are no credentials.
 require_relative "telemetry/langfuse"
+require_relative "telemetry/prompt_registry"
 
 module Boukensha
   module Telemetry

@@ -15,7 +15,7 @@ module Boukensha
 
     def initialize(context:, registry:, builder:, client:, logger: Logger.new, hooks: nil,
                    max_iterations: MAX_ITERATIONS, max_turn_tokens: nil, max_output_tokens: nil,
-                   root_trace: true)
+                   root_trace: true, prompt_source: nil)
       @context           = context
       @registry          = registry
       @builder           = builder
@@ -29,6 +29,10 @@ module Boukensha
       @max_output_tokens = max_output_tokens
       @iteration         = 0
       @root_trace        = root_trace
+      # A Telemetry::PromptRegistry::Prompt when the system prompt was fetched
+      # from Langfuse, nil when it came off disk. Carried rather than looked up
+      # so the Agent does not need to know the registry exists.
+      @prompt_source     = prompt_source
     end
 
     def run
@@ -162,12 +166,19 @@ module Boukensha
     def call_model(**opts)
       backend = @builder.backend
       provider = backend.respond_to?(:provider_name) ? backend.provider_name : nil
+      # When the system prompt came from Langfuse, say which version produced
+      # this generation. Without it a prompt rollback is invisible in the trace
+      # history: you can see quality change and not what changed. Absent (prompt
+      # came off disk) the keys are simply not set.
+      source = @prompt_source
       @logger.operation("chat #{backend&.model}", kind: :client, attributes: {
         "gen_ai.operation.name" => "chat",
         "gen_ai.provider.name" => provider,
         "gen_ai.request.model" => backend&.model,
-        "boukensha.backend" => provider
-      }) do |frame|
+        "boukensha.backend" => provider,
+        "langfuse.observation.prompt.name" => source&.name,
+        "langfuse.observation.prompt.version" => source&.version
+      }.compact) do |frame|
         frame.set(provider: provider, model: backend&.model,
                   iteration: @iteration, tools_advertised: @context.advertised_tools.size,
                   context_tokens: @context.current_tokens)

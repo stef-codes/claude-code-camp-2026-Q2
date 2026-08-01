@@ -109,6 +109,20 @@ observability:
     # now writes `langfuse.observation.input` / `.output`, so the panes work.
     capture_content: true
     content_max_bytes: 4096
+  # Fetch system prompts from Langfuse instead of the files under prompts/, so a
+  # prompt can be edited, versioned and rolled back without a redeploy, and so a
+  # trace can say WHICH version produced it.
+  #
+  # A separate switch from `otel.enabled` on purpose: tracing is passive,
+  # whereas this puts a network call in front of the first model call of every
+  # process. It is safe to leave on — the registry returns nil on any failure
+  # (no credentials, timeout, 404, bad body) and prompt resolution falls back to
+  # the file that shipped — but "safe" is not the same as "free".
+  #
+  # Prompts are looked up as `boukensha-<task>-system` at label `production`.
+  # Push the current file with the Langfuse API, or edit it in the UI.
+  prompts:
+    enabled: true
 
 # Allowlists for the framework's OWN automatic tool users -- the composites that
 # run outside the model's turn. Each key is a `Boukensha.tool_dispatcher(<key>)`

@@ -31,7 +31,7 @@ module Boukensha
 
     attr_reader :logger, :context, :model, :version
 
-    def initialize(context:, registry:, builder:, client:, logger:, hooks: nil, config_dir: nil, provider: nil, model: nil, version: nil, api_key: nil, servers: nil, max_iterations: nil, max_turn_tokens: nil, max_output_tokens: nil)
+    def initialize(context:, registry:, builder:, client:, logger:, hooks: nil, config_dir: nil, provider: nil, model: nil, version: nil, api_key: nil, servers: nil, prompt_source: nil, max_iterations: nil, max_turn_tokens: nil, max_output_tokens: nil)
       @context    = context
       @registry   = registry
       @builder    = builder
@@ -46,6 +46,7 @@ module Boukensha
       @version    = version
       @api_key    = api_key
       @servers    = servers
+      @prompt_source = prompt_source
       @max_iterations    = max_iterations
       @max_turn_tokens   = max_turn_tokens
       @max_output_tokens = max_output_tokens
@@ -132,6 +133,9 @@ module Boukensha
         client:   @client,
         logger:   @logger,
         hooks:    @hooks,
+        # Resolved once when the REPL booted, so every turn stamps the same
+        # prompt version rather than re-fetching per turn.
+        prompt_source: @prompt_source,
         max_iterations:    @max_iterations,
         max_turn_tokens:   @max_turn_tokens,
         max_output_tokens: @max_output_tokens

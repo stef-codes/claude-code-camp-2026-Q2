@@ -151,6 +151,76 @@ class TestLangfuseAttributes < Minitest::Test
     assert_empty recorder.scores
   end
 
+  # ---------- prompt management -------------------------------------------
+
+  # Central prompt management puts a network call in front of the first model
+  # call of every process. That is only acceptable if failure is invisible, so
+  # these tests are all about the failure path — the success path is the easy
+  # half and is verified live.
+  R = Boukensha::Telemetry::PromptRegistry
+
+  def test_prompt_fetching_is_opt_in
+    assert_nil R.from_env({ "LANGFUSE_PUBLIC_KEY" => "pk", "LANGFUSE_SECRET_KEY" => "sk",
+                            "LANGFUSE_BASE_URL" => "https://example.test" }, enabled: false)
+  end
+
+  def test_prompt_fetching_needs_all_three_credentials
+    assert_nil R.from_env({ "LANGFUSE_PUBLIC_KEY" => "pk" }, enabled: true)
+  end
+
+  # A Langfuse outage must not stop the agent starting. `fetch` returning nil is
+  # an ordinary answer meaning "use the file".
+  def test_an_unreachable_langfuse_returns_nil_rather_than_raising
+    registry = R.new(base_url: "https://127.0.0.1:1", public_key: "pk", secret_key: "sk",
+                     warning_io: StringIO.new)
+
+    assert_nil registry.fetch("boukensha-player-system")
+  end
+
+  # Including the miss. Without caching a negative result, an agent whose prompt
+  # was never pushed pays the connect timeout on every single lookup.
+  def test_a_miss_is_cached_so_the_timeout_is_paid_once
+    registry = R.new(base_url: "https://127.0.0.1:1", public_key: "pk", secret_key: "sk",
+                     warning_io: StringIO.new)
+    registry.fetch("boukensha-player-system")
+
+    calls = 0
+    registry.define_singleton_method(:request) { |_name| calls += 1 }
+    registry.fetch("boukensha-player-system")
+
+    assert_equal 0, calls, "the second lookup must not hit the network again"
+  end
+
+  # Prompt names are namespaced: a Langfuse project is shared with whatever else
+  # the team runs, and "system" would be a careless thing to claim.
+  def test_prompt_names_are_namespaced_per_task
+    assert_equal "boukensha-player-system", Boukensha::Tasks::Player.langfuse_prompt_name
+    assert_equal "boukensha-explorer-system", Boukensha::Tasks::Explorer.langfuse_prompt_name
+  end
+
+  # The precedence that makes "roll back without a redeploy" true, and the
+  # fallback that keeps it safe.
+  def test_langfuse_beats_the_file_but_nil_falls_back_to_it
+    remote = R::Prompt.new(name: "boukensha-player-system", version: 3, text: "FROM LANGFUSE")
+
+    text = Boukensha::Tasks::Player.system_prompt(
+      {}, default_prompts_dir: Boukensha::Config::PROMPTS_DIR, registry: StubRegistry.new(remote)
+    )
+    assert_equal "FROM LANGFUSE", text
+    assert_equal 3, Boukensha::Tasks::Player.last_prompt_source.version
+
+    from_file = Boukensha::Tasks::Player.system_prompt(
+      {}, default_prompts_dir: Boukensha::Config::PROMPTS_DIR, registry: StubRegistry.new(nil)
+    )
+    refute_equal "FROM LANGFUSE", from_file
+    assert_nil Boukensha::Tasks::Player.last_prompt_source,
+               "a file-sourced prompt must not claim a Langfuse version"
+  end
+
+  StubRegistry = Struct.new(:prompt) do
+    def fetch(_name) = prompt
+  end
+
   class ScoreRecorder
     attr_reader :scores
 
