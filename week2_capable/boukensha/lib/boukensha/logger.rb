@@ -10,7 +10,16 @@ module Boukensha
   class Logger
     DEFAULT_SESSION_DIR = "sessions".freeze
 
-    attr_reader :session_id, :path
+    attr_reader :session_id, :path, :telemetry
+
+    # Attach input/output to the currently-open span, for a caller that has them
+    # in hand at the right moment. Deliberately NOT written to the session log:
+    # the jsonl already carries `prompt`/`request`/`response` events with this
+    # content, and the monitor reads their ORDER, so a second copy here would
+    # duplicate the transcript and shift what the reader sees.
+    def capture_io(input: nil, output: nil)
+      @telemetry.capture_io(input: input, output: output)
+    end
 
     DEFAULT_TASK = "player".freeze
 
@@ -68,10 +77,20 @@ module Boukensha
     # everything that follows.
     def operation(name, trigger: nil, kind: :internal, attributes: {}, root: false)
       span_attributes = {
+        # `session.id` is the OTel-conventional key and Langfuse accepts it as
+        # an alias, which is why session grouping has worked from the start.
+        # `langfuse.session.id` is the native key, set alongside it so the
+        # grouping does not depend on an alias staying supported.
         "session.id" => @session_id,
+        "langfuse.session.id" => @session_id,
         "boukensha.session_id" => @session_id,
         "boukensha.task" => current_task,
-        "boukensha.trigger" => trigger
+        "boukensha.trigger" => trigger,
+        # Which agent produced this span, as first-class metadata rather than
+        # something to infer from the span name. A delegated run is a different
+        # task at a different depth under the same trace.
+        "langfuse.observation.metadata.task" => current_task,
+        "langfuse.observation.metadata.trigger" => trigger
       }.merge(attributes).compact
       @telemetry.in_span(name, kind: kind, attributes: span_attributes, root: root) do |span|
         Operation.open(name, trigger: trigger) do |frame|

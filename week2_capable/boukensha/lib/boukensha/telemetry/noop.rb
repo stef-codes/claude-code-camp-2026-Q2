@@ -18,6 +18,7 @@ module Boukensha
       def current_ids = {}
       def propagation_carrier = {}
       def capture_event(_event) = nil
+      def capture_io(input: nil, output: nil) = nil
       def force_flush(timeout: nil) = true
       def shutdown(timeout: nil) = true
     end

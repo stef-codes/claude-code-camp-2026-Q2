@@ -76,25 +76,82 @@ module Boukensha
         carrier
       end
 
+      # Which logged phase supplies a span's INPUT, and which key inside the
+      # event carries it. `request` deliberately outranks `prompt`: both fire on
+      # the same `chat` span and the later write wins, and `request` is the
+      # payload that actually went to the provider.
+      INPUT_PHASES = {
+        "prompt"    => :messages,
+        "request"   => :messages,
+        "tool_call" => :args
+      }.freeze
+
+      OUTPUT_PHASES = {
+        "plan"        => :text,   # the preamble that accompanies a tool call
+        "response"    => :text,
+        "tool_result" => :result
+      }.freeze
+
+      # Everything else worth keeping, as observation metadata rather than I/O.
+      METADATA_PHASES = %w[injected_context context_transform].freeze
+
+      # Content goes out as span ATTRIBUTES, not span events, and that is the
+      # whole point of this method.
+      #
+      # It used to write `span.add_event("boukensha.<phase>", …)`, which is
+      # perfectly good OpenTelemetry and completely invisible in Langfuse:
+      # Langfuse reads `langfuse.observation.input` / `.output` off span
+      # attributes and does not look at events at all. So every prompt, model
+      # response, tool call and tool result was being exported to a place the
+      # backend never reads, and the UI showed empty input/output panes on every
+      # trace — verified against the public API before this change, and the
+      # reason turning `capture_content` on appeared to do nothing.
+      #
+      # The attribute names are the documented Langfuse OTel mapping. `session.id`
+      # (set in Logger#operation) is already a recognised alias for
+      # `langfuse.session.id`, which is why session grouping worked all along.
       def capture_event(event)
         phase = (event[:phase] || event["phase"]).to_s
         span = ::OpenTelemetry::Trace.current_span
         return unless span.context.valid?
 
+        # A marker, not content: it says a reasoning block existed without
+        # shipping it, so it stays on regardless of capture_content.
         if phase == "reasoning"
           span.add_event("boukensha.reasoning", attributes: { "boukensha.reasoning.present" => true })
           return
         end
         return unless @capture_content
-        return unless %w[prompt request response tool_call tool_result injected_context context_transform].include?(phase)
 
-        json = JSON.generate(redact(event))
-        truncated = json.bytesize > @content_max_bytes
-        json = json.byteslice(0, @content_max_bytes).scrub if truncated
-        span.add_event("boukensha.#{phase}", attributes: {
-          "boukensha.content" => json,
-          "boukensha.content.truncated" => truncated
-        })
+        if (key = INPUT_PHASES[phase])
+          write_content(span, "langfuse.observation.input", event, key)
+        elsif (key = OUTPUT_PHASES[phase])
+          write_content(span, "langfuse.observation.output", event, key)
+        elsif METADATA_PHASES.include?(phase)
+          write_content(span, "langfuse.observation.metadata.#{phase}", event, nil)
+        end
+      rescue StandardError => e
+        warn_once(e)
+      end
+
+      # Attach input/output to the span that is open RIGHT NOW, for callers that
+      # know what a span consumed and produced at the moment it runs.
+      #
+      # `capture_event` cannot do this job for the LLM call. `logger.prompt` and
+      # `logger.request` fire before `call_model` opens the `chat` span and
+      # `logger.response` fires after it closes, so all three land on the
+      # enclosing `iteration` — which left the generation itself, the one
+      # observation carrying the model name and the token usage, with empty
+      # input and output. Verified against the Langfuse API before this existed:
+      # 32 observations, I/O on `iteration` and on every tool, none on `chat`.
+      def capture_io(input: nil, output: nil)
+        return unless @capture_content
+
+        span = ::OpenTelemetry::Trace.current_span
+        return unless span.context.valid?
+
+        write_content(span, "langfuse.observation.input", { value: input }, :value) unless input.nil?
+        write_content(span, "langfuse.observation.output", { value: output }, :value) unless output.nil?
       rescue StandardError => e
         warn_once(e)
       end
@@ -114,6 +171,24 @@ module Boukensha
       end
 
       private
+
+      # `key` picks the interesting field out of the event; nil means "the whole
+      # event". A plain String is written as-is so Langfuse renders prose as
+      # prose, and anything structured is JSON — the shape its input/output
+      # viewer expects. Redaction and the byte cap apply either way, because
+      # this is the boundary where content leaves the machine.
+      def write_content(span, attribute, event, key)
+        value = key ? (event[key] || event[key.to_s]) : event
+        return if value.nil?
+
+        value = redact(value, key&.to_s)
+        text  = value.is_a?(String) ? value : JSON.generate(value)
+        if text.bytesize > @content_max_bytes
+          text = text.byteslice(0, @content_max_bytes).scrub
+          span.set_attribute("boukensha.content.truncated", true)
+        end
+        span.set_attribute(attribute, text)
+      end
 
       def configure_once
         return if self.class.instance_variable_get(:@configured)

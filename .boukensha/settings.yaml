@@ -98,12 +98,16 @@ mud:
 observability:
   otel:
     enabled: true
-    # OFF deliberately: with capture_content false only metadata leaves the
-    # machine (model, provider, token counts, latency, span/tool names). Turn
-    # it on and full prompts + MUD transcripts ship to Langfuse Cloud. It also
-    # will NOT populate Langfuse's input/output panes on its own -- boukensha
-    # writes content to span *events*, and Langfuse reads span *attributes*.
-    capture_content: false
+    # ON: full prompts, model responses and MUD transcripts ship to Langfuse
+    # Cloud, redacted (api keys, Bearer tokens, sk-*) and capped at
+    # content_max_bytes per span. Set false and only metadata leaves the machine
+    # -- model, provider, token counts, latency, span and tool names.
+    #
+    # This used to be off with a note that turning it on would NOT populate
+    # Langfuse's input/output panes, because content was written to span
+    # *events* and Langfuse reads span *attributes*. That is fixed: the exporter
+    # now writes `langfuse.observation.input` / `.output`, so the panes work.
+    capture_content: true
     content_max_bytes: 4096
 
 # Allowlists for the framework's OWN automatic tool users -- the composites that

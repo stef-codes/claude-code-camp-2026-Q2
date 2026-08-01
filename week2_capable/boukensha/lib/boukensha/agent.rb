@@ -42,7 +42,15 @@ module Boukensha
         "gen_ai.operation.name" => "invoke_agent",
         "gen_ai.agent.name" => agent_name,
         "boukensha.max_iterations" => @max_iterations,
-        "boukensha.max_turn_tokens" => @max_turn_tokens
+        "boukensha.max_turn_tokens" => @max_turn_tokens,
+        # Trace-level, and only meaningful on the ROOT span — Langfuse reads
+        # these off whichever span opens the trace. `langfuse.trace.name`
+        # overrides the span name, which matters because every trace would
+        # otherwise be called "invoke_agent player" and be unsearchable.
+        # The tags are what make a delegated subagent run findable as a class
+        # ("show me every explorer trace") rather than one at a time.
+        "langfuse.trace.name" => "#{agent_name} turn",
+        "langfuse.trace.tags" => ["boukensha", "mud", agent_name].compact
       }) do |turn_frame|
         compact_if_needed
         @hooks.before_turn(context: @context)
@@ -163,7 +171,16 @@ module Boukensha
         frame.set(provider: provider, model: backend&.model,
                   iteration: @iteration, tools_advertised: @context.advertised_tools.size,
                   context_tokens: @context.current_tokens)
+        # The generation's own input, on the generation's own span. Everything
+        # else about this call — model, provider, token usage, latency — is
+        # already here; without these two lines the one observation Langfuse
+        # costs is also the one with nothing to show.
+        @logger.capture_io(input: @context.request_messages.map { |m| { role: m.role, content: m.content } })
         response = @client.call(**opts)
+        # The raw content array rather than just the text: on a tool-use round
+        # the text is empty and the `tool_use` blocks ARE the output, which is
+        # exactly the round you most want to read back later.
+        @logger.capture_io(output: response["content"])
         usage = response["usage"] || {}
         frame.set(
           "gen_ai.usage.input_tokens" => usage["input_tokens"],
