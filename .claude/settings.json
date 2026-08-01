@@ -66,7 +66,12 @@
       "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select name, count\\(*\\) as rows_with_this_name, sum\\(visit_count\\) as visits from rooms group by name having count\\(*\\)>1 order by rows_with_this_name desc;\")",
       "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select confidence, count\\(*\\) from rooms group by confidence;\")",
       "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select id,name,visit_count from rooms order by visit_count desc limit 6;\")",
-      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select r.id, r.name, r.visit_count, count\\(e.direction\\) as exits, sum\\(e.target_room_id is null\\) as unexplored from rooms r left join room_exits e on e.room_id=r.id where r.visit_count>=3 group by r.id order by r.visit_count desc;\")"
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select r.id, r.name, r.visit_count, count\\(e.direction\\) as exits, sum\\(e.target_room_id is null\\) as unexplored from rooms r left join room_exits e on e.room_id=r.id where r.visit_count>=3 group by r.id order by r.visit_count desc;\")",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select e.id, e.kind, e.keyword, substr\\(e.descr,1,44\\) as descr, s.room_id, r.name from entities e join entity_sightings s on s.entity_id=e.id join rooms r on r.id=s.room_id where e.descr like '%baker%' or e.keyword like '%baker%';\")",
+      "WebFetch(domain:api.reference.langfuse.com)",
+      "Bash(BOUKENSHA_DIR=/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha bundle exec ruby -Ilib -e ' *)",
+      "Bash(chmod +x bin/boukensha-dataset)",
+      "Bash(BOUKENSHA_DIR=/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha bundle exec ruby bin/boukensha-dataset --profile dummy)"
     ],
     "additionalDirectories": [
       "/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha/sessions",
