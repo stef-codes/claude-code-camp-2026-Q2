@@ -60,7 +60,13 @@
       "Bash(curl -s http://localhost:3000/api/v1/profiles)",
       "Bash(curl -s http://localhost:3000/api/v1/knowledge -H 'Cookie: mud_monitor_profile=dummy')",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('attached:',d.get\\('attached'\\),'profile:',d.get\\('profile'\\),'rooms:',d.get\\('stats',{}\\).get\\('rooms'\\),'player room:',\\(d.get\\('player'\\) or {}\\).get\\('current_room'\\)\\)\")",
-      "Bash(curl -s http://localhost:3000/api/v1/world/overlay -H 'Cookie: mud_monitor_profile=dummy')"
+      "Bash(curl -s http://localhost:3000/api/v1/world/overlay -H 'Cookie: mud_monitor_profile=dummy')",
+      "Bash(BOUKENSHA_DIR=/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha timeout 600 bundle exec ruby bin/boukensha --profile dummy --no-tui)",
+      "Bash(sqlite3 .boukensha/profiles/dummy/knowledge.sqlite3 \"select 'rooms='||count\\(*\\) from rooms; select 'exits='||count\\(*\\)||' frontier='||sum\\(target_room_id is null\\)||' traversals='||sum\\(traversals\\) from room_exits; select 'position='||current_room_id||' \\('||\\(select name from rooms where id=current_room_id\\)||'\\)' from player_state;\")",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select name, count\\(*\\) as rows_with_this_name, sum\\(visit_count\\) as visits from rooms group by name having count\\(*\\)>1 order by rows_with_this_name desc;\")",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select confidence, count\\(*\\) from rooms group by confidence;\")",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select id,name,visit_count from rooms order by visit_count desc limit 6;\")",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 \"select r.id, r.name, r.visit_count, count\\(e.direction\\) as exits, sum\\(e.target_room_id is null\\) as unexplored from rooms r left join room_exits e on e.room_id=r.id where r.visit_count>=3 group by r.id order by r.visit_count desc;\")"
     ],
     "additionalDirectories": [
       "/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha/sessions",
