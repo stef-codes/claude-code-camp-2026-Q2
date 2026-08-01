@@ -1,4 +1,8 @@
 require_relative "telemetry/noop"
+# Scores, unlike traces, are not an OpenTelemetry concept and do not depend on
+# the otel gems — so this is required unconditionally, and disables itself when
+# there are no credentials.
+require_relative "telemetry/langfuse"
 
 module Boukensha
   module Telemetry

@@ -12,6 +12,11 @@ module Boukensha
 
     attr_reader :session_id, :path, :telemetry
 
+    # 0 is the player's own turn; anything deeper is a delegated subagent. Public
+    # because a hook shared between the parent and its delegates needs to know
+    # which one it is currently running inside.
+    def depth = @task_stack.size - 1
+
     # Attach input/output to the currently-open span, for a caller that has them
     # in hand at the right moment. Deliberately NOT written to the session log:
     # the jsonl already carries `prompt`/`request`/`response` events with this
@@ -24,7 +29,7 @@ module Boukensha
     DEFAULT_TASK = "player".freeze
 
     def initialize(session_id: nil, dir: nil, log: nil, snapshot: {}, task: DEFAULT_TASK,
-                   telemetry: nil)
+                   telemetry: nil, scorer: :from_env)
       @session_id = session_id || generate_session_id
       # So `Operation.wire_meta` can hand an MCP call the id of the session
       # that made it, with no session_id parameter threaded through Hooks, the
@@ -39,6 +44,12 @@ module Boukensha
       @counters   = Hash.new(0)
       @meters     = []
       @telemetry  = telemetry || Telemetry::Noop.new
+      # Scores are a Langfuse concept with no OpenTelemetry equivalent, so they
+      # travel on their own channel. `:from_env` means "build one if there are
+      # credentials", nil disables it, and a test passes its own. Absent
+      # credentials this stays nil and every #score call is a no-op — the same
+      # posture the tracer takes.
+      @scorer     = scorer == :from_env ? Telemetry::Langfuse.from_env : scorer
 
       FileUtils.mkdir_p(File.dirname(@path))
       @log_io = File.open(@path, "a")
@@ -368,8 +379,29 @@ module Boukensha
       @subscribers << block
     end
 
+    # Attach a number to the trace this span belongs to.
+    #
+    # The trace id comes off the ambient Operation stack, so no call site has to
+    # know one — the same trick `operation_stamp` uses. A score raised outside
+    # any span has no trace to hang on and is dropped rather than invented.
+    #
+    # It is ALSO written to the session log, unlike #capture_io: a score is a
+    # judgement the agent made about itself, and the local jsonl should record
+    # it whether or not Langfuse is configured. The monitor can then show the
+    # same numbers with no vendor involved.
+    def score(name:, value:, comment: nil, data_type: "NUMERIC")
+      frame = Operation.current
+      write_log({ phase: "score", name: name.to_s, value: value,
+                  comment: comment }.merge(operation_stamp).compact)
+      @scorer&.score(trace_id: frame&.trace_id, name: name, value: value,
+                     data_type: data_type, comment: comment)
+      nil
+    end
+
     def close
       @telemetry.force_flush(timeout: 5)
+      # After the trace flush, so the traces these scores refer to exist first.
+      @scorer&.flush
       @log_io&.close
     end
 

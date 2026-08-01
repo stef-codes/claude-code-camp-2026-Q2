@@ -81,6 +81,88 @@ class TestLangfuseAttributes < Minitest::Test
     end
   end
 
+  # ---------- scores ------------------------------------------------------
+
+  # Scores are the one thing that cannot ride OTLP — no OpenTelemetry equivalent
+  # exists — so they get their own HTTP channel, and its failure modes matter
+  # more than usual because it runs inside a live agent.
+  L = Boukensha::Telemetry::Langfuse
+
+  def test_scoring_is_disabled_without_credentials
+    assert_nil L.from_env({})
+    assert_nil L.from_env({ "LANGFUSE_PUBLIC_KEY" => "pk", "LANGFUSE_SECRET_KEY" => "" })
+  end
+
+  def test_scores_queue_rather_than_sending
+    scorer = L.new(base_url: "https://example.test", public_key: "pk", secret_key: "sk")
+    scorer.score(trace_id: "t1", name: "navigate.arrived", value: 1)
+
+    assert_equal 1, scorer.pending.length
+    assert_equal "navigate.arrived", scorer.pending.first.name
+  end
+
+  # A score with no trace has nothing to attach to. Dropping it beats posting it
+  # somewhere it can never be found.
+  def test_a_score_without_a_trace_id_is_dropped
+    scorer = L.new(base_url: "https://example.test", public_key: "pk", secret_key: "sk")
+    scorer.score(trace_id: nil, name: "navigate.arrived", value: 1)
+
+    assert_empty scorer.pending
+  end
+
+  # A scoring outage must never become an agent outage.
+  def test_flush_swallows_a_dead_endpoint
+    scorer = L.new(base_url: "https://127.0.0.1:1", public_key: "pk", secret_key: "sk",
+                   warning_io: StringIO.new)
+    scorer.score(trace_id: "t1", name: "x", value: 1)
+
+    assert_equal 0, scorer.flush
+  end
+
+  # The regression this one guards: `after_turn` is not once per user turn. It
+  # fires on every exit from the agent loop AND once per delegated subagent, so
+  # the first version of this produced EIGHT position scores for one prompt.
+  def test_the_turn_score_samples_once_per_distinct_state
+    hooks = Boukensha::Mud::Hooks.allocate
+    recorder = ScoreRecorder.new
+    hooks.instance_variable_set(:@logger, recorder)
+    hooks.instance_variable_set(:@current_room_id, 7)
+    hooks.instance_variable_set(:@candidate_room_ids, [])
+    hooks.instance_variable_set(:@mode, :navigating)
+    hooks.instance_variable_set(:@last_scored_position, nil)
+
+    3.times { hooks.after_turn(context: nil, text: "x") }
+    assert_equal 2, recorder.scores.length, "same state three times is one sample"
+
+    hooks.instance_variable_set(:@current_room_id, 9)
+    hooks.after_turn(context: nil, text: "x")
+    assert_equal 4, recorder.scores.length, "a changed state is a new sample"
+  end
+
+  def test_a_delegated_subagent_does_not_score_on_the_players_behalf
+    hooks = Boukensha::Mud::Hooks.allocate
+    recorder = ScoreRecorder.new(depth: 1)
+    hooks.instance_variable_set(:@logger, recorder)
+    hooks.instance_variable_set(:@current_room_id, 7)
+    hooks.instance_variable_set(:@candidate_room_ids, [])
+    hooks.instance_variable_set(:@last_scored_position, nil)
+
+    hooks.after_turn(context: nil, text: "x")
+    assert_empty recorder.scores
+  end
+
+  class ScoreRecorder
+    attr_reader :scores
+
+    def initialize(depth: 0)
+      @scores = []
+      @depth = depth
+    end
+
+    def depth = @depth
+    def score(**kwargs) = @scores << kwargs
+  end
+
   class SpanAttributeRecorder
     attr_reader :attributes
 

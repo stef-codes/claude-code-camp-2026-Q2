@@ -138,6 +138,7 @@ module Boukensha
         @fight           = nil    # an open encounter, spanning several tool calls
         @mode            = Mode::LOCALIZING
         @location_candidates = {}  # { room_id => score }
+        @last_scored_position = nil  # dedupes the per-turn localization score
         @candidate_room_ids  = []  # ambiguous set still in play
       end
 
@@ -271,6 +272,7 @@ module Boukensha
           enter_mode(Mode::NAVIGATING)
           result = @navigator.navigate(destination: destination, from: @current_room_id)
           enter_mode(@candidate_room_ids.size > 1 ? Mode::RELOCALIZING : Mode::NAVIGATING)
+          score_navigation(result, destination)
           result
         end
       end
@@ -284,9 +286,11 @@ module Boukensha
           end
 
           enter_mode(Mode::EXPLORING)
+          before = @store.stats[:rooms].to_i
           result = @scripted_explorer.explore(from: @current_room_id, max_rooms: max_rooms,
                                               goal_name: goal_name)
           enter_mode(Mode::NAVIGATING)
+          score_exploration(result, before)
           result
         end
       end
@@ -349,7 +353,74 @@ module Boukensha
         lines.join("\n")
       end
 
+      # ---------- after_turn --------------------------------------------------
+
+      # The turn's closing judgement, and the one score that is about the AGENT
+      # rather than about a single action: after everything it just did, does it
+      # know where it is standing?
+      #
+      # That is the question the whole memory layer exists to answer, and until
+      # now it was only ever visible as prose in a state block. As a score it
+      # becomes a series you can watch across sessions and alert on — the
+      # difference between logging and governance.
+      def after_turn(context:, text:)
+        guard do
+          # `after_turn` is NOT once per user turn, and assuming it was produced
+          # eight `position.known` scores for a single prompt. It fires on every
+          # exit path out of the agent loop, and — since delegated subagents now
+          # share the parent's hooks — once more for each subagent run too.
+          #
+          # Two guards, because they answer different objections. Depth 0 keeps
+          # a delegate from scoring on the player's behalf; the state check keeps
+          # the remaining wrap-up paths from resampling a fact that has not
+          # changed. What survives is one observation per distinct state, which
+          # is what a "does the agent know where it is" series should contain.
+          next unless @logger&.depth.to_i.zero?
+
+          sample = [ @current_room_id, @candidate_room_ids.size ]
+          next if sample == @last_scored_position
+
+          @last_scored_position = sample
+          @logger&.score(name: "position.known", value: @current_room_id ? 1 : 0,
+                         data_type: "BOOLEAN",
+                         comment: @current_room_id ? "room ##{@current_room_id}" : "position unknown")
+          # >1 candidate means the fingerprints could not separate this room from
+          # another. Tracked as a count rather than a flag so a run that gets
+          # steadily more confused is visible as a trend.
+          @logger&.score(name: "localization.candidates", value: @candidate_room_ids.size,
+                         comment: "mode=#{@mode}")
+        end
+        nil
+      end
+
       private
+
+      # `ok` is the navigator's own verdict, so this adds no judgement of its
+      # own — it just makes the verdict countable. The reason rides along as the
+      # comment, which is what turns "12% of navigations fail" into "12% of
+      # navigations fail, and they are all `:blocked`".
+      def score_navigation(result, destination)
+        return unless result.is_a?(Hash)
+
+        @logger&.score(name: "navigate.arrived", value: result[:ok] ? 1 : 0, data_type: "BOOLEAN",
+                       comment: "#{result[:reason]} → #{destination}")
+        return unless result[:steps_walked]
+
+        @logger&.score(name: "navigate.steps", value: result[:steps_walked],
+                       comment: "planned #{Array(result[:path]).size}, replans #{result[:replans]}")
+      end
+
+      # Rooms actually added, measured against the store rather than taken from
+      # the explorer's own report: the number that matters is what survived into
+      # memory, not what the walk believed it saw. That distinction is exactly
+      # the bug that made a 30-move walk record one room.
+      def score_exploration(result, rooms_before)
+        return unless result.is_a?(Hash)
+
+        added = @store.stats[:rooms].to_i - rooms_before
+        @logger&.score(name: "explore.rooms_added", value: added,
+                       comment: "reason=#{result[:reason]}")
+      end
 
       def enter_mode(next_mode)
         @mode = Mode.coerce(next_mode)
