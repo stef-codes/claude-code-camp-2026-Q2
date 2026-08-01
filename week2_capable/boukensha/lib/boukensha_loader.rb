@@ -93,10 +93,15 @@ module BoukenshaLoader
   end
 
   def self.resolve_profile!
-    requested = extract_profile_argument || ENV["BOUKENSHA_PROFILE"]
+    rc = load_rc
+    requested = extract_profile_argument || ENV["BOUKENSHA_PROFILE"] || rc["boukensha_profile"]
     available = profiles
     if requested.nil? || requested.empty?
-      abort "boukensha: select a profile with --profile NAME or BOUKENSHA_PROFILE.\nAvailable profiles: #{available.join(', ')}"
+      # Single-profile installs: no need to force --profile every launch.
+      requested = available.first if available.size == 1
+    end
+    if requested.nil? || requested.empty?
+      abort "boukensha: select a profile with --profile NAME, BOUKENSHA_PROFILE, or boukensha_profile in #{rc_file}.\nAvailable profiles: #{available.join(', ')}"
     end
     abort "boukensha: invalid profile name #{requested.inspect}" unless PROFILE_PATTERN.match?(requested)
 
@@ -238,6 +243,9 @@ module BoukenshaLoader
           navigate_call_tool: Boukensha.tool_dispatcher(
             Boukensha::Mud::Navigator::NAME, logger: parent, initiator: "hook"
           ),
+          explore_call_tool: Boukensha.tool_dispatcher(
+            Boukensha::Mud::Explorer::NAME, logger: parent, initiator: "hook"
+          ),
           look_candidates: candidates,
           logger: parent,
           journal: journal,
@@ -248,16 +256,14 @@ module BoukenshaLoader
         )
         hooks mud_hooks
 
-        # The ONE composite the model can call, and the only native tool this
-        # deployment registers. It lives here rather than in lib/boukensha/
-        # because the framework ships no tools — and it is a native tool rather
-        # than a daemon one because the daemon exposes only primitives on
-        # purpose (mcp/dispatcher.rb). The MUD still sees one `move` per round
-        # trip; only the composition moved agent-side.
+        # Native composites the model can call. They live here rather than in
+        # lib/boukensha/ because the framework ships no tools — and they are
+        # native rather than daemon tools because the daemon exposes only
+        # primitives on purpose. Travel directions stay off the player's own
+        # MCP allowlist: navigate / explore / relocalize own movement.
         #
-        # It is registered only inside this begin/rescue: without a store there
-        # is no map, and a navigator with no map has nothing to route over. It
-        # simply does not appear, exactly as memory doesn't.
+        # Registered only inside this begin/rescue: without a store there is no
+        # map, and these tools have nothing to route or score over.
         tool Boukensha::Mud::Navigator::NAME,
              description:
                "Walk to a room you have ALREADY found, using your own map. Give the " \
@@ -284,6 +290,39 @@ module BoukenshaLoader
                }
              } do |destination:|
           Boukensha::Mud::Navigator.render(mud_hooks.navigate(destination: destination))
+        end
+
+        tool "explore",
+             description:
+               "Discover unknown rooms or find a place that is not yet on your map. " \
+               "Pass a short brief such as \"find the bakery\" or \"map 5 new rooms\". " \
+               "Delegates to the Explorer subagent (which may walk unexplored exits). " \
+               "Do not use this when you already know the destination — use navigate.",
+             parameters: {
+               brief: {
+                 type: "string",
+                 description: "What to find or how far to explore."
+               }
+             } do |brief:|
+          # Simple "map N rooms" briefs stay scripted (no LLM). Open-ended
+          # discovery goes through run_task so the Explorer can judge when to stop.
+          if (m = brief.to_s.match(/\A\s*map\s+(\d+)\s+rooms?\s*\z/i))
+            Boukensha::Mud::Explorer.render(
+              mud_hooks.scripted_explore(max_rooms: m[1].to_i)
+            )
+          else
+            Boukensha.run_task(Boukensha::Tasks::Explorer, brief.to_s, logger: parent)
+          end
+        end
+
+        tool "relocalize",
+             description:
+               "Resolve an ambiguous position when the state block says your location " \
+               "is uncertain or lists multiple candidates. Delegates to the Relocalizer " \
+               "subagent with a scripted shortlist of disambiguating moves.",
+             parameters: {} do
+          Boukensha.run_task(Boukensha::Tasks::Relocalizer, mud_hooks.ambiguity_brief,
+                             logger: parent)
         end
       rescue Boukensha::Mud::Memory::Store::Unavailable => e
         # No memory is a degraded agent, not a dead one: it explores exactly as

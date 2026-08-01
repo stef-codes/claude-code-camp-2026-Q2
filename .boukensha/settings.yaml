@@ -26,6 +26,10 @@ tasks:
     # already been told about, which is the exact cost the memory layer exists
     # to remove (see the long note in boukensha_loader.rb).
     #
+    # Travel `move` is also ABSENT on the player. The parent is the goal layer:
+    # known destinations go through `navigate`, discovery through `explore`,
+    # ambiguous position through `relocalize`. Subagents own raw movement.
+    #
     # `send_raw` is also absent, and that one is a judgement call you may want
     # to reverse. It is an escape hatch that sends an arbitrary command string,
     # so it can reach `look`, and it steps around `move`'s direction enum and
@@ -34,7 +38,8 @@ tasks:
     # have the escape hatch than the guarantee.
     allow:
       - navigate                 # native: walk a route the agent already knows
-      - "move(direction: north|east|south|west|up|down)"
+      - explore                  # native: delegate frontier discovery to Explorer
+      - relocalize               # native: delegate ambiguous-position recovery
       - examine
       - consider
       - "check(kind: score|inventory|equipment|gold|exits|time|weather|levels|wimpy|toggle|where)"
@@ -58,6 +63,29 @@ tasks:
       - "shop(action: buy|sell|list|value|offer)"
       - practice
       - save_character
+  explorer:
+    provider: anthropic
+    model: claude-haiku-4-5
+    max_iterations: 12
+    max_output_tokens: 512
+    prompt_override:
+      system: true
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
+      - "check(kind: exits)"
+      - poll
+      - mud_status
+  relocalizer:
+    provider: anthropic
+    model: claude-haiku-4-5
+    max_iterations: 6
+    max_output_tokens: 384
+    prompt_override:
+      system: true
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
+      - "check(kind: exits)"
+      - poll
 mud:
   host: localhost
   port: 4000
@@ -118,6 +146,11 @@ tools:
   # Directions are pinned to the six the daemon's `move` enum declares, which is
   # also exactly what RouteFinder will route over.
   navigate:
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
+  # Scripted nearest-frontier explore composite (optional path alongside the
+  # LLM Explorer subagent). Same move-only surface as navigate.
+  explore:
     allow:
       - "move(direction: north|east|south|west|up|down)"
 
