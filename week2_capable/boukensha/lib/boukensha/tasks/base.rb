@@ -68,7 +68,10 @@ module Boukensha
         def read_default_prompt(prompt_name, default_prompts_dir: nil)
           return nil unless default_prompts_dir
 
-          read_file(File.join(default_prompts_dir, "#{prompt_name}.md"))
+          # Per-task default first (`prompts/explorer/system.md`), then the
+          # shared player fallback (`prompts/system.md`).
+          read_file(File.join(default_prompts_dir, task_name, "#{prompt_name}.md")) ||
+            read_file(File.join(default_prompts_dir, "#{prompt_name}.md"))
         end
 
         def read_file(path)
