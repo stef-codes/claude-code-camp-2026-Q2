@@ -2,6 +2,11 @@ require "json"
 require_relative "room_parser"
 require_relative "room_survey"
 require_relative "state_block"
+require_relative "localizer"
+require_relative "disambiguator"
+require_relative "explorer"
+require_relative "mode"
+require_relative "navigator"
 require_relative "memory/store"
 require_relative "memory/fingerprint"
 require_relative "../hooks"
@@ -77,7 +82,8 @@ module Boukensha
       # navigator's grants `move` and nothing else. Sharing one lambda would
       # mean whichever allowlist is wider silently governs both. Defaults to
       # `call_tool` so a test can inject one fake and drive everything.
-      def initialize(store:, call_tool:, navigate_call_tool: nil, look_candidates: nil,
+      def initialize(store:, call_tool:, navigate_call_tool: nil, explore_call_tool: nil,
+                     look_candidates: nil,
                      logger: nil, journal: nil,
                      prefix: "tbamud__", turn_policy: false, warn_to: $stderr)
         @store     = store
@@ -109,6 +115,15 @@ module Boukensha
                                    store: store, prefix: prefix,
                                    logger: logger, on_arrival: method(:navigator_arrival))
 
+        explore_tool = explore_call_tool || navigate_call_tool || call_tool
+        @scripted_explorer = Explorer.new(
+          call_tool: explore_tool, store: store, prefix: prefix, logger: logger,
+          on_arrival: method(:navigator_arrival),
+          navigate: ->(destination:) { navigate(destination: destination) }
+        )
+        @localizer     = Localizer.new(store)
+        @disambiguator = Disambiguator.new(store)
+
         # Per-iteration scratch, reset as it is consumed.
         @pending_events = []
         @arrival        = nil     # { look:, direction:, from_room_id: } after a movement
@@ -121,7 +136,12 @@ module Boukensha
         # only, never per iteration. See SCORE_STALE_TOOLS.
         @scored          = false
         @fight           = nil    # an open encounter, spanning several tool calls
+        @mode            = Mode::LOCALIZING
+        @location_candidates = {}  # { room_id => score }
+        @candidate_room_ids  = []  # ambiguous set still in play
       end
+
+      attr_reader :mode, :location_candidates, :current_room_id
 
       # ---------- before_turn ---------------------------------------------
 
@@ -248,11 +268,69 @@ module Boukensha
             next { ok: false, reason: :no_position, destination: destination }
           end
 
-          @navigator.navigate(destination: destination, from: @current_room_id)
+          enter_mode(Mode::NAVIGATING)
+          result = @navigator.navigate(destination: destination, from: @current_room_id)
+          enter_mode(@candidate_room_ids.size > 1 ? Mode::RELOCALIZING : Mode::NAVIGATING)
+          result
         end
       end
 
+      # Scripted nearest-frontier expansion (no LLM). Used by tests and as a
+      # cheap path when the player brief is a simple "map N rooms".
+      def scripted_explore(max_rooms: Explorer::DEFAULT_MAX_ROOMS, goal_name: nil)
+        guard do
+          unless @current_room_id
+            next { ok: false, reason: :no_position }
+          end
+
+          enter_mode(Mode::EXPLORING)
+          result = @scripted_explorer.explore(from: @current_room_id, max_rooms: max_rooms,
+                                              goal_name: goal_name)
+          enter_mode(Mode::NAVIGATING)
+          result
+        end
+      end
+
+      # Brief handed to Tasks::Relocalizer via the native `relocalize` tool.
+      def ambiguity_brief
+        if @candidate_room_ids.size <= 1 && @ambiguity.to_i <= 1
+          return "Position looks unambiguous " \
+                 "(room ##{@current_room_id || 'unknown'}). No relocalization needed."
+        end
+
+        ids = @candidate_room_ids.dup
+        ids = @location_candidates.keys if ids.empty? && @location_candidates.any?
+        lines = ["Position is ambiguous. Mode: #{@mode}."]
+        lines << "Current provisional room: ##{@current_room_id}" if @current_room_id
+        if @location_candidates.any?
+          ranked = @location_candidates.sort_by { |_id, s| -s }
+          lines << "Candidates (id => score):"
+          ranked.each do |id, score|
+            room = @store.room(id)
+            lines << "  ##{id} #{room && room[:name]}  score=#{format('%.3f', score)}"
+          end
+        elsif ids.any?
+          lines << "Candidate ids: #{ids.join(', ')}"
+        end
+
+        suggestions = @disambiguator.suggest_actions(ids)
+        if suggestions.any?
+          lines << "Suggested disambiguating moves (pick one):"
+          suggestions.each do |s|
+            lines << "  #{s[:direction]} (divergence=#{s[:divergence]})"
+          end
+        else
+          best = @disambiguator.choose_disambiguating_action(ids)
+          lines << "Suggested move: #{best[:direction]}" if best
+        end
+        lines.join("\n")
+      end
+
       private
+
+      def enter_mode(next_mode)
+        @mode = Mode.coerce(next_mode)
+      end
 
       # The Navigator's arrival callback, and the whole reason it never decides
       # for itself where it is.
@@ -310,9 +388,13 @@ module Boukensha
       def resolve_position(look)
         return unless look.complete?
 
+        enter_mode(Mode::LOCALIZING) if @mode != Mode::COMBAT
+
         # Cleared per arrival: a `check(exits)` spent disambiguating one room
         # must never be mistaken for evidence about the next.
         @resolved_targets = nil
+        @location_candidates = {}
+        @candidate_room_ids  = []
 
         weak = Memory::Fingerprint.weak(name: look.name, description: look.description,
                                         exit_dirs: look.exit_dirs)
@@ -324,7 +406,7 @@ module Boukensha
         room, ambiguity = case candidates.size
                           when 1 then [candidates.first, nil]
                           when 0 then [nil, nil]
-                          else disambiguate(candidates, weak, from_id, direction)
+                          else disambiguate(candidates, weak, from_id, direction, look)
                           end
 
         if candidates.empty?
@@ -332,8 +414,11 @@ module Boukensha
         elsif room.nil?
           room, entities = provisional(look, weak, candidates)
           ambiguity = candidates.size
+          @candidate_room_ids = candidates.map { |c| c[:id] }
+          enter_mode(Mode::RELOCALIZING)
         else
           room, entities = revisit(room, look)
+          enter_mode(Mode::NAVIGATING) unless @mode == Mode::COMBAT
         end
         return unless room
 
@@ -347,7 +432,7 @@ module Boukensha
 
       # Several rooms share this weak fingerprint. Disambiguate in increasing
       # order of cost, and stop at the first answer.
-      def disambiguate(candidates, weak, from_id, direction)
+      def disambiguate(candidates, weak, from_id, direction, look)
         # By arrival edge. Free.
         if from_id && direction
           known = @store.exit_at(from_id, direction)
@@ -365,6 +450,18 @@ module Boukensha
         @resolved_targets = targets
         matches = candidates.select { |c| c[:strong_fingerprint] == strong }
         return [matches.first, nil] if matches.size == 1
+
+        # Scored candidate set (week_2_plan Phase 6). A clear winner collapses
+        # the set without creating a provisional room.
+        scores = @localizer.score(look, candidates: candidates, from_id: from_id,
+                                  direction: direction, exit_targets: targets)
+        @location_candidates = scores
+        @candidate_room_ids  = candidates.map { |c| c[:id] }
+        winner_id = @localizer.pick(scores)
+        if winner_id
+          hit = candidates.find { |c| c[:id] == winner_id }
+          return [hit, nil] if hit
+        end
 
         # Still ambiguous. The honest record is not a guess.
         [nil, candidates.size]
@@ -585,6 +682,7 @@ module Boukensha
           room_id: @current_room_id,
           hp_before: @store.player[:hp]
         }
+        enter_mode(Mode::COMBAT)
       end
 
       def settle_fight(local, text)
@@ -614,6 +712,7 @@ module Boukensha
         @store.record_encounter!(outcome: outcome, room_id: f[:room_id] || @current_room_id,
                                  entity_id: f[:entity_id], hp_before: f[:hp_before], hp_after: hp_after)
         @fight = nil
+        enter_mode(@candidate_room_ids.size > 1 ? Mode::RELOCALIZING : Mode::NAVIGATING)
       end
 
       # =========================== movement =================================
@@ -649,7 +748,9 @@ module Boukensha
           events: events,
           first_visit: @first_visit,
           candidates: (@first_visit && room && room[:look_candidates] && parse_json(room[:look_candidates])),
-          ambiguity: @ambiguity
+          ambiguity: @ambiguity,
+          mode: @mode,
+          location_candidates: (@ambiguity.to_i > 1 ? @location_candidates : nil)
         )
         # The prose and the look_candidates are sent ONCE, on arrival. Every
         # later iteration in the same room gets the name — the model has already

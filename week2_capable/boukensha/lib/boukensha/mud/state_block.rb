@@ -30,21 +30,22 @@ module Boukensha
       # `candidates`  — look_candidates, only while the room is unexamined.
       # `ambiguity`   — how many rooms this could be, when it is more than one.
       def render(room:, exits: [], here: [], player: {}, events: [], first_visit: false,
-                 candidates: nil, ambiguity: nil)
+                 candidates: nil, ambiguity: nil, mode: nil, location_candidates: nil)
         return nil if room.nil? && player.to_h.empty? && events.empty?
 
         lines = []
-        lines << location_line(room, ambiguity)
+        lines << location_line(room, ambiguity, mode)
         lines << "  #{room[:description]}" if first_visit && room && !room[:description].to_s.empty?
         lines << exits_line(exits) if exits && !exits.empty?
         lines << here_line(here)   if here  && !here.empty?
         lines << candidates_line(candidates) if candidates && !candidates.empty?
+        lines << scored_candidates_line(location_candidates) if location_candidates && !location_candidates.empty?
         lines << you_line(player)  if player && !player.to_h.empty?
         lines << events_line(events) if events && !events.empty?
         lines.compact.join("\n")
       end
 
-      def location_line(room, ambiguity)
+      def location_line(room, ambiguity, mode = nil)
         return "#{HEADER} (unknown — no room established yet)" if room.nil?
 
         parts = ["#{HEADER} #{room[:name]}"]
@@ -53,6 +54,7 @@ module Boukensha
         # A model told its location is ambiguous can act sensibly — walk a step
         # and look again. A model told a confident lie cannot.
         parts << "(uncertain — #{ambiguity} candidates)" if ambiguity.to_i > 1
+        parts << "[#{mode}]" if mode && mode.to_sym != :navigating
         parts.join("  ")
       end
 
@@ -101,6 +103,12 @@ module Boukensha
 
       def candidates_line(candidates)
         "worth a look: #{Array(candidates).join(', ')}"
+      end
+
+      def scored_candidates_line(scores)
+        ranked = scores.sort_by { |_id, s| -s }.first(5)
+        rendered = ranked.map { |id, s| "##{id}=#{format('%.2f', s)}" }
+        "candidates: #{rendered.join(' | ')} — call relocalize if still uncertain"
       end
 
       # Vitals cluster (they are read together and change together); everything
