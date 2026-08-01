@@ -311,7 +311,22 @@ module BoukenshaLoader
               mud_hooks.scripted_explore(max_rooms: m[1].to_i)
             )
           else
-            Boukensha.run_task(Boukensha::Tasks::Explorer, brief.to_s, logger: parent)
+            # `hooks:` is what makes the delegated walk COUNT. Without it the
+            # subagent gets a hookless Agent: `after_tool` never fires, so its
+            # moves update no room, no exit and no position, and `before_model`
+            # never fires either, so it never receives the state block its own
+            # prompt tells it to follow the `?` frontier in. It walked blind and
+            # forgot — 30 moves through 12 rooms recorded exactly one — and
+            # because position never advanced, the next brief re-planned from
+            # the same stale room and re-walked the same street.
+            #
+            # It must be the SAME instance the player uses (the local, not a new
+            # one): position lives on Hooks, and a second would explore from a
+            # different idea of where the character is standing.
+            mud_hooks.delegating(Boukensha::Mud::Mode::EXPLORING) do
+              Boukensha.run_task(Boukensha::Tasks::Explorer, brief.to_s,
+                                 logger: parent, hooks: mud_hooks)
+            end
           end
         end
 
@@ -321,8 +336,14 @@ module BoukenshaLoader
                "is uncertain or lists multiple candidates. Delegates to the Relocalizer " \
                "subagent with a scripted shortlist of disambiguating moves.",
              parameters: {} do
-          Boukensha.run_task(Boukensha::Tasks::Relocalizer, mud_hooks.ambiguity_brief,
-                             logger: parent)
+          # Same reasoning as `explore` above, and it matters more here: the
+          # entire job of this subagent is to move until position stops being
+          # ambiguous. Hookless, its disambiguating moves would resolve nothing,
+          # because resolving is what `after_tool` does.
+          mud_hooks.delegating(Boukensha::Mud::Mode::RELOCALIZING) do
+            Boukensha.run_task(Boukensha::Tasks::Relocalizer, mud_hooks.ambiguity_brief,
+                               logger: parent, hooks: mud_hooks)
+          end
         end
       rescue Boukensha::Mud::Memory::Store::Unavailable => e
         # No memory is a degraded agent, not a dead one: it explores exactly as

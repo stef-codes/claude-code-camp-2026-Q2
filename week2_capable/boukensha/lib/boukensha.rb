@@ -220,7 +220,28 @@ module Boukensha
   # mints its own file as before, which is what standalone callers and tests
   # want. A borrowed logger is never closed here: it belongs to the parent, and
   # closing it would silently truncate the rest of the parent's turn.
-  def self.run_task(task_class, input, log: nil, logger: nil, max_output_tokens: nil, ollama_host: "http://localhost:11434")
+  #
+  # `hooks:` — pass the CALLER's hooks and the sub-run gets the same lifecycle
+  # seam the parent has. Omit it and the sub-run is hookless, which is what
+  # standalone callers and tests want.
+  #
+  # This existing without it was a real bug, not a missing nicety. `.run` and
+  # `.repl` both take `hooks:`; this was the only entry point that could not, so
+  # a delegated agent could act on the world and have none of it observed. The
+  # Explorer subagent walked 30 moves through 12 rooms and recorded ONE, because
+  # `after_tool` — the only thing that turns a `move` into a map update — never
+  # fired for it. Worse, `before_model` never fired either, so it never received
+  # the state block its own prompt tells it to navigate by: it was walking
+  # blind AND forgetting. Position then froze at whatever room the parent last
+  # knew about, so every subsequent delegation re-planned from the same stale
+  # place and re-walked the same streets.
+  #
+  # Sharing the parent's instance is the point, not a shortcut. Position lives
+  # on Hooks, so a second instance would explore from a different idea of where
+  # the character is standing. There is no recursion risk: the hooks' own tool
+  # calls go through `Boukensha.tool_dispatcher`, which builds a SEPARATE
+  # Registry with no hooks on it.
+  def self.run_task(task_class, input, log: nil, logger: nil, hooks: nil, max_output_tokens: nil, ollama_host: "http://localhost:11434")
     cfg            = config
     task_settings  = cfg.tasks(task_class.task_name)
     system         = task_class.system_prompt(task_settings, user_prompts_dir: cfg.user_prompts_dir, default_prompts_dir: Config::PROMPTS_DIR)
@@ -252,6 +273,7 @@ module Boukensha
     logger   ||= Logger.new(log: log, task: task_class.task_name,
                             telemetry: Telemetry.build(config: cfg), snapshot: run_snapshot)
     agent      = Agent.new(context: ctx, registry: registry, builder: builder, client: client, logger: logger,
+                           hooks: hooks,
                            max_iterations: max_iters, max_turn_tokens: cfg.agent_max_turn_tokens,
                            max_output_tokens: max_out, root_trace: own_logger)
 

@@ -291,6 +291,29 @@ module Boukensha
         end
       end
 
+      # Bracket a DELEGATED run — one that hands the world to an LLM subagent
+      # rather than to a scripted composite.
+      #
+      # `navigate` and `scripted_explore` already set their own mode around work
+      # they do themselves. The two `run_task` delegations could not: they hand
+      # control to `Tasks::Explorer` / `Tasks::Relocalizer` and only get text
+      # back, so without this the state block claims the agent is NAVIGATING for
+      # the whole time a subagent is walking the frontier.
+      #
+      # The restore is deliberately conditional. A subagent's moves now fire
+      # `after_tool` (that is the point of passing hooks through), so combat can
+      # start, a room can turn out ambiguous, or position can go cold WHILE the
+      # delegate runs — and each of those has already set the mode that matters.
+      # Stamping the previous value back over them would erase a fact the world
+      # just supplied to restore one from before the subagent ran.
+      def delegating(mode)
+        previous = @mode
+        enter_mode(mode)
+        yield
+      ensure
+        enter_mode(previous) if @mode == Mode.coerce(mode)
+      end
+
       # Brief handed to Tasks::Relocalizer via the native `relocalize` tool.
       def ambiguity_brief
         if @candidate_room_ids.size <= 1 && @ambiguity.to_i <= 1
