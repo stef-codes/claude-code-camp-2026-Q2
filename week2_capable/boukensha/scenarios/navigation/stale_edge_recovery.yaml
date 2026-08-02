@@ -54,14 +54,27 @@ assertions:
   # continuing is guessing.
   replans_eq: 1
   steps_eq: 2
-  # The repair itself: Hooks#link_arrival demoted the edge that lied before the
-  # Navigator ever noticed it was lost, so walking a bad route fixes it.
-  edge_repaired:
+  # The repair, in two halves that a single assertion used to conflate.
+  #
+  # The edge now points where the agent actually landed — walking a bad route
+  # fixes the map. This reads the store after the walk, and it is the half that
+  # nothing checked until a mutation test went looking: `link_exit!` could have
+  # been deleted outright and the suite would have stayed green.
+  edge_retargeted:
+    room: Town Square
+    direction: north
+    to: Back Alley
+  # And the edge that lied paid for it. `demote_exit!` cancels the traversal
+  # `link_exit!` is about to add, so a lying edge does not end up looking better
+  # travelled than an honest one. Dropping it leaves the map correct today and
+  # the routing weights wrong tomorrow — which is precisely the kind of damage
+  # a passing walk cannot show you.
+  stale_edge_demoted:
     room: Town Square
     direction: north
   deaths: 0
 
 scoring:
   required: [navigation_ok, reached_room]
-  recovery: [edge_repaired, replans_eq]
+  recovery: [edge_retargeted, stale_edge_demoted, replans_eq]
   expected_steps: 2

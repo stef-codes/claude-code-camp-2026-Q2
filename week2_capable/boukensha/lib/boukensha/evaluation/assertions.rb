@@ -57,21 +57,46 @@ module Boukensha
 
         # --- recovery, from state changes and nothing else -------------------
         #
-        # Both of these read journal events emitted by the STORE
+        # These read journal events emitted by the STORE
         # (`record_exit_failure!`, `demote_exit!`), so they are true only if the
-        # code actually wrote the repair. Pass `true` for "it happened at all",
-        # or a mapping to pin which edge.
+        # code actually wrote them. Pass `true` for "it happened at all", or a
+        # mapping to pin which edge.
         "blocked_exit_recorded" => lambda { |m, want|
           match_edge(m[:blocked_exits], want)
         },
-        "edge_repaired" => lambda { |m, want|
-          match_edge(m[:repaired_edges], want)
+        # The CONFIDENCE PENALTY on an edge that lied, and named for that
+        # rather than for "repair" — which is what it was called until a
+        # mutation test showed the name was a lie. Deleting `demote_exit!`
+        # left the map correctly retargeted anyway, because
+        # `Hooks#link_arrival` calls `link_exit!` unconditionally on the next
+        # line. What the demote uniquely does is cancel the traversal that
+        # `link_exit!` is about to add, so a lying edge does not end up looking
+        # BETTER travelled than an honest one — `traversals` is the denominator
+        # of RouteFinder's failure rate (route_finder.rb:166).
+        "stale_edge_demoted" => lambda { |m, want|
+          match_edge(m[:demoted_edges], want)
+        },
+        # The repair itself, read off the store after the walk rather than off
+        # an event: does this edge now point where the agent actually landed?
+        # Nothing observed this until the same mutation test went looking —
+        # `link_exit!` could have been deleted outright and the whole suite
+        # would have stayed green.
+        #
+        #   edge_retargeted: { room: Town Square, direction: north, to: Back Alley }
+        "edge_retargeted" => lambda { |m, want|
+          want = want.transform_keys(&:to_s)
+          actual = m[:exits][edge_key(want["room"], want["direction"])]
+          [ actual.to_s == want["to"].to_s, actual ]
         }
       }.freeze
 
       NAMES = CHECKS.keys.freeze
 
       module_function
+
+      # One spelling of "this edge", shared by the metric that builds the hash
+      # and the assertion that reads it.
+      def edge_key(room, direction) = "#{room}:#{direction}"
 
       def match_edge(recorded, want)
         recorded = Array(recorded)

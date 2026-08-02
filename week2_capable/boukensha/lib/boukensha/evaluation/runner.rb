@@ -189,10 +189,28 @@ module Boukensha
           # Recovery evidence, straight off the store's own journal: these lines
           # exist only because `record_exit_failure!` / `demote_exit!` ran.
           blocked_exits: edges(journal.events_for("exit", "failure"), names),
-          repaired_edges: edges(journal.events_for("exit", "demote"), names),
+          demoted_edges: edges(journal.events_for("exit", "demote"), names),
+          # Where the map points NOW. The journal says what happened; this says
+          # what is true afterwards, and the two are not the same question — a
+          # walk can retarget an edge without demoting it, and (as a mutation
+          # test showed) an assertion on the event alone will not notice if the
+          # retarget stops happening.
+          exits: exit_targets_now(store, room_ids, names),
           rooms: store.stats[:rooms],
           budget_exceeded: driver.budget_exceeded?
         }
+      end
+
+      # Every seeded room's exits, as the store holds them once the walk is
+      # over: { "Town Square:north" => "Back Alley" }. An unlinked exit maps to
+      # nil rather than being absent, so an assertion can tell "this edge points
+      # nowhere" from "this edge does not exist".
+      def exit_targets_now(store, room_ids, names)
+        room_ids.each_with_object({}) do |(room_name, id), out|
+          store.exits_for(id).each do |exit|
+            out[Assertions.edge_key(room_name, exit[:direction])] = names[exit[:target_room_id]]
+          end
+        end
       end
 
       def edges(events, names)

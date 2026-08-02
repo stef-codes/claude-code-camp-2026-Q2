@@ -114,9 +114,9 @@ class TestEvaluationScorer < Minitest::Test
   # --- recovery --------------------------------------------------------------
 
   def test_recovery_is_the_fraction_of_nominated_evidence_that_held
-    s = scenario(assertions: { "navigation_ok" => true, "edge_repaired" => true, "replans_eq" => 1 },
-                 required: %w[navigation_ok], recovery: %w[edge_repaired replans_eq])
-    result = score(s, outcomes(navigation_ok: true, edge_repaired: true, replans_eq: false), metrics)
+    s = scenario(assertions: { "navigation_ok" => true, "stale_edge_demoted" => true, "replans_eq" => 1 },
+                 required: %w[navigation_ok], recovery: %w[stale_edge_demoted replans_eq])
+    result = score(s, outcomes(navigation_ok: true, stale_edge_demoted: true, replans_eq: false), metrics)
 
     assert_equal 5.0, result[:breakdown][:recovery][:earned]
     assert_includes result[:breakdown][:recovery][:note], "1 of 2"
@@ -157,9 +157,9 @@ class TestEvaluationScorer < Minitest::Test
   # --- the total -------------------------------------------------------------
 
   def test_the_score_is_a_percentage_of_what_was_applicable
-    s = scenario(assertions: { "navigation_ok" => true, "edge_repaired" => true },
-                 required: %w[navigation_ok], recovery: %w[edge_repaired], expected_steps: 2)
-    result = score(s, outcomes(navigation_ok: true, edge_repaired: false), metrics)
+    s = scenario(assertions: { "navigation_ok" => true, "stale_edge_demoted" => true },
+                 required: %w[navigation_ok], recovery: %w[stale_edge_demoted], expected_steps: 2)
+    result = score(s, outcomes(navigation_ok: true, stale_edge_demoted: false), metrics)
 
     # 70 success + 15 efficiency + 0 of 10 recovery + 5 safety, out of 100.
     assert_equal 90.0, result[:points]

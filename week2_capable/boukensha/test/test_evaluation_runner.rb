@@ -89,8 +89,30 @@ class TestEvaluationRunner < Minitest::Test
     assert_equal "The Cozy Bakery", result.metrics[:final_room]
     assert_equal %w[north south], result.metrics[:moves],
                  "the second step comes from the replan, not the original route"
+  end
+
+  # The repair and the penalty are two facts, and one assertion used to claim
+  # both. Deleting `demote_exit!` left the map correctly retargeted — the
+  # relink comes from `link_exit!`, which `link_arrival` calls unconditionally —
+  # so the event-based check was never watching the repair at all.
+  def test_walking_a_stale_edge_retargets_it_to_where_the_agent_landed
+    result = run_scenario("stale_edge_recovery")
+
+    assert_equal "Main Street", result.metrics[:exits]["The Cozy Bakery:west"],
+                 "an edge nobody walked is untouched"
+    assert_equal "Back Alley", result.metrics[:exits]["Town Square:north"],
+                 "the edge that lied now points where the agent actually landed"
+  end
+
+  # Separately, because it is a different consequence: `demote_exit!` cancels
+  # the traversal `link_exit!` adds, so an edge that lied does not end up
+  # looking better travelled than an honest one. `traversals` is the
+  # denominator of RouteFinder's failure rate, so this is tomorrow's routing.
+  def test_the_edge_that_lied_is_demoted_as_well_as_retargeted
+    result = run_scenario("stale_edge_recovery")
+
     assert_equal [ { room_id: 1, room: "Town Square", direction: "north" } ],
-                 result.metrics[:repaired_edges]
+                 result.metrics[:demoted_edges]
   end
 
   # --- it is the real thing being driven -------------------------------------
