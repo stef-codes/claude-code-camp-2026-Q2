@@ -495,6 +495,7 @@ end
 require_relative "boukensha/tool"
 require_relative "boukensha/message"
 require_relative "boukensha/models"
+require_relative "boukensha/token_budget"
 require_relative "boukensha/context"
 require_relative "boukensha/errors"
 require_relative "boukensha/registry"

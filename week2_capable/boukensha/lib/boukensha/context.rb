@@ -1,10 +1,13 @@
 require_relative "tool"
 require_relative "message"
+require_relative "token_budget"
 
 module Boukensha
   class Context
+    # `turn_tokens` is deliberately NOT here — it is a method now, reading the
+    # turn's shared ledger rather than an instance variable this object owns.
     attr_reader :system, :messages, :tools, :context_window, :working_dir,
-                :turn_tokens, :compaction_threshold
+                :compaction_threshold
     attr_accessor :current_tokens
 
     # Volatile state the agent should reason over RIGHT NOW — where it is, what
@@ -40,7 +43,12 @@ module Boukensha
       @messages             = []
       @tools                = {}
       @current_tokens       = 0
-      @turn_tokens          = 0
+      # Per-turn SPEND, which is not this object's to own: a turn can span
+      # several agents (the player plus whatever it delegates to), and each of
+      # those has its own Context. A Context therefore starts with a private
+      # ledger and gives it up the moment an Agent hands it the turn's — see
+      # `adopt_budget` and TokenBudget.
+      @token_budget         = TokenBudget.new
     end
 
     def register_tool(tool)
@@ -78,15 +86,32 @@ module Boukensha
       @current_tokens = n.to_i
     end
 
-    # Reset the cumulative per-turn spend counter. Called at the top of a turn.
+    # Spend from the turn's ledger instead of this Context's own. A delegated
+    # subagent adopts its parent's, which is what makes `max_turn_tokens` a
+    # budget for the TURN rather than a per-agent allowance handed out afresh at
+    # every delegation.
+    def adopt_budget(budget)
+      @token_budget = budget if budget
+    end
+
+    def token_budget = @token_budget
+
+    # The cumulative per-turn spend — the parent's and every delegate's summed,
+    # once an Agent has wired the ledger up.
+    def turn_tokens = @token_budget.spent
+
+    # Reset the cumulative per-turn spend counter. Called at the top of a turn
+    # by the agent that OWNS the budget; a delegate must never call it, or the
+    # parent's spend so far vanishes mid-turn.
     def reset_turn_tokens
-      @turn_tokens = 0
+      @token_budget.reset
     end
 
     # Add one API call's input+output tokens to the cumulative per-turn total.
-    # This is the spend budget — distinct from current_tokens (window pressure).
+    # This is the spend budget — distinct from current_tokens (window pressure),
+    # which stays per-Context because a window is a property of one conversation.
     def add_turn_tokens(input, output)
-      @turn_tokens += input.to_i + output.to_i
+      @token_budget.add(input, output)
     end
 
     # Fraction of the context window currently in use (0.0–1.0).

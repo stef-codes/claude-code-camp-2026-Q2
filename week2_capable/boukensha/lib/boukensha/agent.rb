@@ -33,10 +33,28 @@ module Boukensha
       # from Langfuse, nil when it came off disk. Carried rather than looked up
       # so the Agent does not need to know the registry exists.
       @prompt_source     = prompt_source
+      # A turn's token budget belongs to the turn, not to an agent. If one is
+      # already open we are a DELEGATE — built inside a parent's tool call by
+      # `Boukensha.run_task` — and we spend from the parent's ledger so
+      # `max_turn_tokens` bounds the whole turn. If not, this turn is ours to
+      # open. Nothing between here and the delegation has to pass anything.
+      @turn_budget       = TokenBudget.current
+      @owns_turn_budget  = @turn_budget.nil?
+      @turn_budget     ||= TokenBudget.new
+      @context.adopt_budget(@turn_budget)
     end
 
     def run
-      @context.reset_turn_tokens
+      TokenBudget.with(@turn_budget) { run_turn }
+    end
+
+    private
+
+    def run_turn
+      # Only the owner resets. A delegate calling this would erase everything
+      # the parent has already spent, which is precisely how a "60,000 token"
+      # ceiling turned into 60,000 per agent.
+      @context.reset_turn_tokens if @owns_turn_budget
       # The `turn` span is the trace id's one child that spans the whole call:
       # every iteration, the compaction check, and wrap_up re-parent under it
       # for free, because Operation reads the ambient stack rather than being
