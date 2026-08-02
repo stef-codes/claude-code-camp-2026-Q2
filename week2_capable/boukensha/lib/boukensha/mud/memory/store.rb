@@ -360,6 +360,30 @@ module Boukensha
           ).map { |r| row(r) }
         end
 
+        # Unwalked exits whose DESTINATION NAME we already know.
+        #
+        # `check(exits)` turns `n e s w` into `north - The Cozy Bakery`, so the
+        # agent routinely knows the name of a room it has never stood in — on a
+        # real map, every single frontier exit had one. Those names were
+        # write-only until now: `rooms` had no row, so `navigate` answered "no
+        # room called that in your map" about a place it could name and point at.
+        #
+        # Returned as approach edges (`room_id` + `direction`), not as rooms,
+        # because that is honestly all we have: somewhere reachable, and the one
+        # step that leaves the map.
+        def frontier_targets(name, fuzzy: false)
+          return [] if name.to_s.strip.empty?
+
+          needle = name.to_s.strip.downcase
+          clause = fuzzy ? "LIKE ?" : "= ?"
+          needle = "%#{needle}%" if fuzzy
+          @db.execute(
+            "SELECT room_id, direction, target_name FROM room_exits " \
+            "WHERE target_room_id IS NULL AND target_name IS NOT NULL " \
+            "AND LOWER(target_name) #{clause} ORDER BY room_id, direction", [needle]
+          ).map { |r| row(r) }
+        end
+
         def exit_at(room_id, direction)
           return nil unless room_id && direction
 

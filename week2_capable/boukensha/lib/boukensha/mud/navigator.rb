@@ -62,6 +62,10 @@ module Boukensha
         return "navigate ✗ #{result[:reason]}" unless result.is_a?(Hash)
 
         goal = [result[:goal_name], result[:goal_id] && "(##{result[:goal_id]})"].compact.join(" ")
+        # Say when the destination was a name off an exits line rather than a
+        # room the agent has stood in. The walk is real either way, but the
+        # model should know the last step was into something unverified.
+        goal += " (unvisited)" if result[:provisional]
         if result[:ok]
           line = +"navigate → #{goal}: #{result[:steps_walked]} of #{result[:steps_planned]}"
           line << " · #{result[:path].join(', ')}" if result[:path]&.any?
@@ -166,7 +170,13 @@ module Boukensha
           current = arrived
 
           expected = route.room_ids[index + 1]
-          next if arrived.nil? || arrived == expected
+          # `expected` is nil on the last step of a route to a room the agent
+          # has never visited — one resolved from an exit's target_name, where
+          # nothing has ever said what is actually through that door. That is an
+          # absence of expectation, not a violated one: treating it as a
+          # surprise would make every such route "replan" off a prediction it
+          # never made.
+          next if arrived.nil? || expected.nil? || arrived == expected
 
           # The map was wrong. Hooks#link_arrival has ALREADY demoted the stale
           # edge and relinked it as a side effect of resolving where we are — so
@@ -223,6 +233,7 @@ module Boukensha
           ambiguous: route.ambiguous,
           suggestions: route.suggestions,
           frontier: route.frontier,
+          provisional: route.provisional,
           replans: replans
         }.compact
       end

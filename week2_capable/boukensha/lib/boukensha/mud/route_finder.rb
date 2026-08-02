@@ -25,8 +25,14 @@ module Boukensha
       #             room_ids[i+1] is where steps[i] should land, which is the
       #             comparison the walker makes after every move
       # `ambiguous` the other rooms that also answered to this name
+      # `provisional` marks a goal the agent has never stood in — one resolved
+      # from a frontier exit's target_name rather than from the rooms table. The
+      # last step of such a route lands somewhere unverified, and every layer
+      # above needs to be able to say so rather than imply a certainty it does
+      # not have.
       Route = Struct.new(:ok, :reason, :steps, :room_ids, :goal_id, :goal_name,
-                         :ambiguous, :suggestions, :frontier, keyword_init: true) do
+                         :ambiguous, :suggestions, :frontier, :provisional,
+                         keyword_init: true) do
         def length = steps ? steps.length : 0
       end
 
@@ -42,7 +48,16 @@ module Boukensha
         return failure(:unknown_destination, suggestions: suggest(to)) if from.nil?
 
         goals = resolve(to)
-        return failure(:unknown_destination, suggestions: suggest(to)) if goals.empty?
+        if goals.empty?
+          # Nothing in `rooms` answers to this name — but the exits table may
+          # still know where it is. Tried only after real rooms have failed, so
+          # a place the agent has actually stood in always wins over a name it
+          # has merely been told about.
+          provisional = route_to_frontier(to, from: from, max_steps: max_steps)
+          return provisional if provisional
+
+          return failure(:unknown_destination, suggestions: suggest(to))
+        end
 
         goal_ids = goals.map { |g| g[:id] }
         if goal_ids.include?(from)
@@ -178,6 +193,63 @@ module Boukensha
       # at whichever member the agent's own edges reach first — which is exactly
       # what "take me to Market Square" means. The rest ride along in
       # `ambiguous` so the answer can say so out loud.
+      # A route to a room the agent has never visited, ending in one step off
+      # the edge of the map.
+      #
+      # Shape: walk the known graph to the room the frontier exit LEAVES FROM,
+      # then take that exit. So the expensive part is the ordinary search — the
+      # new bit is only the last step, and it is the one step whose destination
+      # is not verifiable in advance. `room_ids` therefore ends in nil, which is
+      # not a gap to paper over: it is the honest statement that nothing has
+      # told us what is through that door yet. Navigator reads that nil as "no
+      # expectation" rather than as a surprise.
+      #
+      # Several exits can lead to the same name (this world is full of repeated
+      # room names, and three of The Bazaar's own exits are called The Bazaar).
+      # They are all offered to one search, which returns the cheapest — the
+      # "fastest path" question, answered by the same Dijkstra as everything
+      # else rather than by a second code path.
+      def route_to_frontier(to, from:, max_steps:)
+        candidates = frontier_candidates(to)
+        return nil if candidates.empty?
+
+        name = candidates.first[:target_name]
+        # The exit may leave from where we are already standing, in which case
+        # there is nothing to search: the whole route is that one step.
+        if (here = candidates.find { |c| c[:room_id] == from })
+          return frontier_route(steps: [ here[:direction] ], room_ids: [ from, nil ], name: name)
+        end
+
+        # One step is spent leaving the map, so the search may only use the rest.
+        found = search(from, candidates.map { |c| c[:room_id] }.uniq, max_steps - 1)
+        return nil unless found
+
+        exit = candidates.find { |c| c[:room_id] == found[:goal_id] }
+        frontier_route(steps: found[:steps] + [ exit[:direction] ],
+                       room_ids: found[:room_ids] + [ nil ], name: name)
+      end
+
+      # Exact first, then substring — mirroring `resolve`, and refusing the same
+      # coin flip. "bakery" matching both The Cozy Bakery and Hannah Bakery is a
+      # question for the caller; two exits leading to the SAME name is not, and
+      # the search picks the nearer.
+      def frontier_candidates(to)
+        return [] if to.is_a?(Integer) || to.to_s.match?(/\A\d+\z/)
+
+        exact = @store.frontier_targets(to.to_s)
+        return exact unless exact.empty?
+
+        fuzzy = @store.frontier_targets(to.to_s, fuzzy: true)
+        fuzzy.map { |c| c[:target_name].to_s.downcase }.uniq.one? ? fuzzy : []
+      rescue StandardError
+        []
+      end
+
+      def frontier_route(steps:, room_ids:, name:)
+        Route.new(ok: true, reason: :arrived, steps: steps, room_ids: room_ids,
+                  goal_id: nil, goal_name: name, provisional: true)
+      end
+
       def resolve(to)
         if to.is_a?(Integer) || to.to_s.match?(/\A\d+\z/)
           room = @store.room(to.to_i)
@@ -194,8 +266,19 @@ module Boukensha
         fuzzy.length == 1 ? fuzzy : []
       end
 
+      # "Did you mean" now includes places known only as an exit's destination
+      # name. Those are the most useful suggestions there are — the agent can
+      # actually be routed to them — and offering only visited rooms was how a
+      # findable destination came back as a flat "no room called that".
       def suggest(to)
-        @store.search_rooms(to.to_s).map { |r| { id: r[:id], name: r[:name] } }
+        rooms = @store.search_rooms(to.to_s).map { |r| { id: r[:id], name: r[:name] } }
+        seen  = rooms.map { |r| r[:name].to_s.downcase }
+        named = @store.frontier_targets(to.to_s, fuzzy: true)
+                      .map { |c| c[:target_name].to_s }
+                      .uniq
+                      .reject { |n| seen.include?(n.downcase) }
+                      .map { |n| { id: nil, name: n, unvisited: true } }
+        rooms + named
       rescue StandardError
         []
       end
