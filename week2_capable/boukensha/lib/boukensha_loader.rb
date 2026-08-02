@@ -249,6 +249,9 @@ module BoukenshaLoader
           retrace_call_tool: Boukensha.tool_dispatcher(
             "retrace", logger: parent, initiator: "hook"
           ),
+          illuminate_call_tool: Boukensha.tool_dispatcher(
+            "illuminate", logger: parent, initiator: "hook"
+          ),
           look_candidates: candidates,
           logger: parent,
           journal: journal,
@@ -307,6 +310,13 @@ module BoukenshaLoader
                  description: "What to find or how far to explore."
                }
              } do |brief:|
+          # Try the automatic light ritual before refusing — mid-turn dark can
+          # appear after before_model already ran.
+          mud_hooks.ensure_lit! if mud_hooks.dark?
+          if mud_hooks.dark?
+            next Boukensha::Mud::Explorer.render(ok: false, reason: :too_dark)
+          end
+
           # Simple "map N rooms" briefs stay scripted (no LLM). Open-ended
           # discovery goes through run_task so the Explorer can judge when to stop.
           if (m = brief.to_s.match(/\A\s*map\s+(\d+)\s+rooms?\s*\z/i))

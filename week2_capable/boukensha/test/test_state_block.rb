@@ -76,6 +76,16 @@ class TestStateBlock < Minitest::Test
     assert_includes S.render(room: nil, player: player), "(unknown — no room established yet)"
   end
 
+  def test_dark_overrides_unknown_and_shows_last_known
+    out = S.render(room: nil, player: player, dark: true,
+                   last_known: { room_name: "Dirt Road", room_id: 71,
+                                 from_name: "Edge of a Clearing", from_id: 70,
+                                 direction: "north" })
+    assert_includes out, "DARK — cannot see the room"
+    assert_includes out, "last known: Dirt Road (#71)"
+    refute_includes out, "unknown — no room established yet"
+  end
+
   # `consider`'s verdict is relative to the player's level. Serving one taken
   # twenty levels ago is precisely the mistake the Strategy section is trying to
   # avoid, so a stale reading is labelled rather than quoted.

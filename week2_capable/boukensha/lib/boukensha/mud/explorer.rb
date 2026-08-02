@@ -40,6 +40,9 @@ module Boukensha
           line << " · #{result[:steps].join(', ')}" if result[:steps]&.any?
           line << " · found #{result[:found]}" if result[:found]
           line
+        elsif result[:reason].to_s == "too_dark"
+          "explore ✗ too_dark — get light first: cast create food, then cast light on waybread " \
+            "(not on yourself); hold the waybread if needed, then retry"
         else
           "explore ✗ #{result[:reason]}#{result[:detail] && " — #{result[:detail]}"}"
         end

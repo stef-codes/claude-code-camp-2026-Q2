@@ -29,12 +29,17 @@ module Boukensha
       # `first_visit` — send the prose once, and never again.
       # `candidates`  — look_candidates, only while the room is unexamined.
       # `ambiguity`   — how many rooms this could be, when it is more than one.
+      # `dark`        — last look/move was pitch black; room is not established.
+      # `last_known`  — optional hint from player_state (not live position):
+      #                 { room_name:, room_id:, from_name:, from_id:, direction: }
       def render(room:, exits: [], here: [], player: {}, events: [], first_visit: false,
-                 candidates: nil, ambiguity: nil, mode: nil, location_candidates: nil)
-        return nil if room.nil? && player.to_h.empty? && events.empty?
+                 candidates: nil, ambiguity: nil, mode: nil, location_candidates: nil,
+                 dark: false, last_known: nil)
+        return nil if room.nil? && player.to_h.empty? && events.empty? && !dark
 
         lines = []
-        lines << location_line(room, ambiguity, mode)
+        lines << location_line(room, ambiguity, mode, dark: dark)
+        lines << last_known_line(last_known) if dark && last_known
         lines << "  #{room[:description]}" if first_visit && room && !room[:description].to_s.empty?
         lines << exits_line(exits) if exits && !exits.empty?
         lines << here_line(here)   if here  && !here.empty?
@@ -45,7 +50,10 @@ module Boukensha
         lines.compact.join("\n")
       end
 
-      def location_line(room, ambiguity, mode = nil)
+      def location_line(room, ambiguity, mode = nil, dark: false)
+        if dark && room.nil?
+          return "#{HEADER} DARK — cannot see the room"
+        end
         return "#{HEADER} (unknown — no room established yet)" if room.nil?
 
         parts = ["#{HEADER} #{room[:name]}"]
@@ -56,6 +64,17 @@ module Boukensha
         parts << "(uncertain — #{ambiguity} candidates)" if ambiguity.to_i > 1
         parts << "[#{mode}]" if mode && mode.to_sym != :navigating
         parts.join("  ")
+      end
+
+      # Hints from a previous process / last confirmed arrival — never claimed
+      # as where the agent is standing right now.
+      def last_known_line(info)
+        info = info.transform_keys(&:to_sym)
+        room = [info[:room_name], info[:room_id] && "(##{info[:room_id]})"].compact.join(" ")
+        return "last known: #{room}" if info[:direction].to_s.empty? || info[:from_id].nil?
+
+        from = [info[:from_name], "(##{info[:from_id]})"].compact.join(" ")
+        "last known: #{room} · arrived #{info[:direction]} from #{from}"
       end
 
       # The one glyph that is genuinely new information: `✓` is a destination the

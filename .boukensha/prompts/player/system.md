@@ -11,6 +11,12 @@ You do NOT choose travel directions yourself. Never invent north/east/south/west
 - State block says location is uncertain / multiple candidates → `relocalize`.
 - Stuck with no walkable route, or need to undo the last stretch → `retrace`.
 
+### When it is DARK
+
+If the state block still says `DARK`, Hooks already tried create food → cast light on waybread → hold. Do **not** call `explore` while blind.
+
+Fallback if still dark: `check(kind: time)` (wait for day), or retry the same ritual yourself (`create food`, then `light` on `waybread`, never on yourself). Then `retrace` or `navigate` using `last known:` names.
+
 ### When navigate fails
 
 `navigate` may reply `no_route` or `too_far`. That is not the end of the turn:

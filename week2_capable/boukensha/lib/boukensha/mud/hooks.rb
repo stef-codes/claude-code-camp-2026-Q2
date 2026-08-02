@@ -91,7 +91,7 @@ module Boukensha
       }.freeze
 
       def initialize(store:, call_tool:, navigate_call_tool: nil, explore_call_tool: nil,
-                     retrace_call_tool: nil,
+                     retrace_call_tool: nil, illuminate_call_tool: nil,
                      look_candidates: nil,
                      logger: nil, journal: nil,
                      prefix: "tbamud__", turn_policy: false, warn_to: $stderr)
@@ -135,6 +135,9 @@ module Boukensha
         # navigate. Defaults to the navigate dispatcher so tests with one fake
         # keep working.
         @retrace_call_tool = retrace_call_tool || navigate_call_tool || call_tool
+        # Outdoor night: create food → cast light on waybread → hold. Own
+        # allowlist (`tools.illuminate.allow`) so room_survey stays look-only.
+        @illuminate_call_tool = illuminate_call_tool
         @localizer     = Localizer.new(store)
         @disambiguator = Disambiguator.new(store)
 
@@ -148,6 +151,9 @@ module Boukensha
         # retrace's own return steps from appending while we unwind.
         @trail           = []
         @suppress_trail  = false
+        # Last look/move was pitch black. Cleared only by a complete room look.
+        # Does NOT revive @current_room_id from player_state — that stays a hint.
+        @dark            = false
         # Is the character sheet believed current? False at process start (a
         # fresh login, or a reconnect after one) and again whenever something
         # has moved gold, experience or level without printing the new totals.
@@ -162,6 +168,8 @@ module Boukensha
       end
 
       attr_reader :mode, :location_candidates, :current_room_id, :trail
+
+      def dark? = !!@dark
 
       # ---------- before_turn ---------------------------------------------
 
@@ -225,6 +233,7 @@ module Boukensha
           open_fight(args) if COMBAT_TOOLS.include?(local)
 
           absorb_mud_text(text)
+          observe_visibility!(text)
 
           # The model looks at its own sheet, its own pack and its own skill
           # list on its own initiative, for gameplay reasons. Every one of those
@@ -258,6 +267,12 @@ module Boukensha
         guard do
           during("position_refresh", "before_model") do
             look = arrival_look || cold_look
+            # Outdoor night: Hooks gets light itself so the model is not stuck
+            # casting on "me" with an empty pack.
+            if @dark
+              lit = during("illuminate", "before_model") { ensure_lit! }
+              look = lit if lit&.complete?
+            end
             resolve_position(look) if look
           end
 
@@ -271,6 +286,32 @@ module Boukensha
         end
         nil
       end
+
+      # tbaMUD `light` needs an object target. Empty inventory + cast on self is
+      # why the agent stayed dark. Sequence: create food → light waybread → hold.
+      # Returns the post-attempt Look (may still be incomplete). No-op without
+      # an illuminate dispatcher or when not currently dark.
+      def ensure_lit!
+        return nil unless @dark
+        return nil unless @illuminate_call_tool
+
+        illuminate_call("cast_spell", spell: "create food")
+        illuminate_call("cast_spell", spell: "light", target: "waybread")
+        illuminate_call("equip_item", action: "hold", item: "waybread")
+
+        text = call(:look)
+        look = RoomParser.parse_look(text)
+        observe_visibility!(text, look)
+        look
+      rescue StandardError => e
+        @warn_to&.puts "[mud_hooks] illuminate failed: #{e.class}: #{e.message}"
+        nil
+      end
+
+      def illuminate_call(tool, **args)
+        @illuminate_call_tool.call("#{@prefix}#{tool}", args)
+      end
+      private :illuminate_call
 
       # ---------- navigate ---------------------------------------------------
 
@@ -300,6 +341,10 @@ module Boukensha
       # cheap path when the player brief is a simple "map N rooms".
       def scripted_explore(max_rooms: Explorer::DEFAULT_MAX_ROOMS, goal_name: nil)
         guard do
+          ensure_lit! if @dark
+          if @dark
+            next { ok: false, reason: :too_dark }
+          end
           unless @current_room_id
             next { ok: false, reason: :no_position }
           end
@@ -318,9 +363,19 @@ module Boukensha
       # edge in the store: a known return exit is walked if present; otherwise
       # the conventional opposite is ATTEMPTED as an action and after_tool /
       # link_arrival record whatever the MUD actually confirmed.
+      #
+      # When the in-memory trail is empty, one crumb may be seeded from
+      # player_state (prev_room / last_direction / current hint) so a restart
+      # on Dirt Road can still try the opposite — still no fabricated edge.
       def retrace(max_steps: Explorer::DEFAULT_MAX_STEPS)
         guard do
-          unless @current_room_id
+          ensure_lit! if @dark
+
+          seed_trail_from_hint! if @trail.empty?
+
+          # Live position, or (when cold/dark) the hint crumb's landing room.
+          here = @current_room_id || (@trail.any? && @trail.last[:to])
+          unless here
             next { ok: false, reason: :no_position, steps: [], stopped_at: nil }
           end
           if @trail.empty?
@@ -329,45 +384,57 @@ module Boukensha
 
           enter_mode(Mode::NAVIGATING)
           steps = []
+          # Failures must `break` out of the loop — `next` only continues
+          # `times`, and would fall through to a false success.
+          failed = nil
           max_steps.times do
             break if @trail.empty?
 
             crumb = @trail.last
-            unless @current_room_id == crumb[:to]
-              next({ ok: false, reason: :lost_trail, steps: steps,
-                     stopped_at: @current_room_id, detail: "expected ##{crumb[:to]}" })
+            unless here == crumb[:to]
+              failed = { ok: false, reason: :lost_trail, steps: steps,
+                         stopped_at: @current_room_id || here, detail: "expected ##{crumb[:to]}" }
+              break
             end
 
             direction = return_direction(crumb)
             unless direction
-              next({ ok: false, reason: :no_return, steps: steps,
-                     stopped_at: @current_room_id,
-                     detail: "no way back toward ##{crumb[:from]}" })
+              failed = { ok: false, reason: :no_return, steps: steps,
+                         stopped_at: @current_room_id || here,
+                         detail: "no way back toward ##{crumb[:from]}" }
+              break
             end
 
             text = @retrace_call_tool.call("#{@prefix}move", { direction: direction })
+            observe_visibility!(text)
             look = RoomParser.parse_look(text)
             unless look.complete?
-              @store.record_exit_failure!(@current_room_id, direction) if @store.respond_to?(:record_exit_failure!)
-              next({ ok: false, reason: :blocked, steps: steps, stopped_at: @current_room_id,
-                     detail: direction, blocked_by: direction })
+              @store.record_exit_failure!(here, direction) if @store.respond_to?(:record_exit_failure!)
+              reason = RoomParser.pitch_black?(text) ? :too_dark : :blocked
+              failed = { ok: false, reason: reason, steps: steps,
+                         stopped_at: @current_room_id || here,
+                         detail: direction, blocked_by: direction }
+              break
             end
 
             @suppress_trail = true
             begin
-              navigator_arrival(look, @current_room_id, direction, text)
+              navigator_arrival(look, here, direction, text)
             ensure
               @suppress_trail = false
             end
             steps << direction
             @trail.pop # outbound crumb we just walked back from
+            here = @current_room_id
 
-            unless @current_room_id == crumb[:from]
-              next({ ok: false, reason: :wrong_arrival, steps: steps,
-                     stopped_at: @current_room_id,
-                     detail: "wanted ##{crumb[:from]}, landed ##{@current_room_id}" })
+            unless here == crumb[:from]
+              failed = { ok: false, reason: :wrong_arrival, steps: steps,
+                         stopped_at: here,
+                         detail: "wanted ##{crumb[:from]}, landed ##{here}" }
+              break
             end
           end
+          next failed if failed
 
           { ok: true, reason: :retraced, steps: steps, stopped_at: @current_room_id,
             steps_walked: steps.length }
@@ -381,6 +448,8 @@ module Boukensha
           line = +"retrace ✓ #{result[:steps].length} step#{'s' if result[:steps].length != 1}"
           line << " · #{result[:steps].join(', ')}" if result[:steps]&.any?
           line
+        elsif result[:reason].to_s == "too_dark"
+          "retrace ✗ too_dark — still cannot see; cast create food, cast light on waybread, then retry"
         else
           at = result[:stopped_at] && "(##{result[:stopped_at]})"
           line = +"retrace ✗ #{result[:reason]}"
@@ -567,7 +636,59 @@ module Boukensha
         # Flagged as a REAL look so a survey that follows can reuse it instead of
         # spending a second one. Movement text never gets this flag — see §5.5.
         @look_is_fresh = true
-        RoomParser.parse_look(call(:look))
+        text = call(:look)
+        look = RoomParser.parse_look(text)
+        observe_visibility!(text, look)
+        look
+      end
+
+      # Pitch black sets @dark; a complete room look clears it. Never promotes
+      # player_state.current_room_id into live position.
+      def observe_visibility!(text, look = nil)
+        look ||= RoomParser.parse_look(text)
+        if RoomParser.pitch_black?(text)
+          @dark = true
+        elsif look.complete?
+          @dark = false
+        end
+      end
+
+      # One crumb from the durable hint columns, when the in-memory trail was
+      # lost (process restart). Only used when live position is unknown or
+      # still matches the hint's landing room.
+      def seed_trail_from_hint!
+        crumb = player_hint_crumb or return
+        return unless @current_room_id.nil? || @current_room_id == crumb[:to]
+
+        @trail << crumb
+      end
+
+      def player_hint_crumb
+        p = @store.player
+        return nil unless p
+
+        from = p[:prev_room_id]
+        to   = p[:current_room_id]
+        dir  = p[:last_direction].to_s
+        return nil if from.nil? || to.nil? || dir.empty?
+        return nil unless RouteFinder::WALKABLE.include?(dir)
+
+        { from: from, direction: dir, to: to }
+      end
+
+      def last_known_hint
+        p = @store.player
+        return nil unless p && p[:current_room_id]
+
+        cur  = @store.room(p[:current_room_id])
+        prev = p[:prev_room_id] && @store.room(p[:prev_room_id])
+        {
+          room_name: cur && cur[:name],
+          room_id: p[:current_room_id],
+          from_name: prev && prev[:name],
+          from_id: p[:prev_room_id],
+          direction: p[:last_direction]
+        }
       end
 
       # §4.2. Identity is `rooms.id`, resolved by content AND arrival edge,
@@ -938,6 +1059,7 @@ module Boukensha
       # wrongly swallowed failure costs an agent that retries a wall forever.
       def movement_outcome(local, args, text)
         look = RoomParser.parse_look(text)
+        observe_visibility!(text, look)
         return nil unless look.complete?
 
         direction = args && (args["direction"] || args[:direction])
@@ -962,7 +1084,9 @@ module Boukensha
           candidates: (@first_visit && room && room[:look_candidates] && parse_json(room[:look_candidates])),
           ambiguity: @ambiguity,
           mode: @mode,
-          location_candidates: (@ambiguity.to_i > 1 ? @location_candidates : nil)
+          location_candidates: (@ambiguity.to_i > 1 ? @location_candidates : nil),
+          dark: @dark && room.nil?,
+          last_known: (@dark && room.nil? ? last_known_hint : nil)
         )
         # The prose and the look_candidates are sent ONCE, on arrival. Every
         # later iteration in the same room gets the name — the model has already

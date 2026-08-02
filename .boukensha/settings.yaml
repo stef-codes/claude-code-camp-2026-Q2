@@ -177,6 +177,12 @@ tools:
   retrace:
     allow:
       - "move(direction: north|east|south|west|up|down)"
+  # Outdoor night / pitch black. `light` must be cast on an object — create a
+  # waybread, light it, hold it. Missing this key makes illuminate a silent no-op.
+  illuminate:
+    allow:
+      - cast_spell
+      - "equip_item(action: hold)"
 
 # Tools for the agent come from MCP servers listed here (boukensha ships none
 # of its own). The `mud` server is the Ruby mud-manager daemon spawned over

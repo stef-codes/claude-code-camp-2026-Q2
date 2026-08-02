@@ -59,6 +59,11 @@ module Boukensha
       # tbaMUD's answer when a keyword doesn't match anything in the room.
       NOT_HERE = /aren't here|isn't here|no one here|nothing here/i.freeze
 
+      # Outdoor night / unlit rooms. Incomplete as a Look (no exits line, no
+      # room name) but a first-class signal: the agent must get light, not
+      # wander and hope a frontier appears.
+      PITCH_BLACK = /it is pitch black/i.freeze
+
       # What one `look` (or one movement result, which has the same shape) says.
       #
       # `complete` is the whole reason this is a struct and not a hash: §6.2's
@@ -77,6 +82,10 @@ module Boukensha
       end
 
       class << self
+        def pitch_black?(text)
+          text.to_s.match?(PITCH_BLACK)
+        end
+
         # The room name, the prose, the exit directions, the entity lines after
         # `[ Exits: ]`, and the prompt stats — all in one pass.
         def parse_look(text)
