@@ -68,6 +68,14 @@ module Boukensha
 
         found = search(from, goal_ids, max_steps)
         unless found
+          # A visited room matched the name but no walked path reaches it —
+          # the "island" case. A named frontier exit may still get there (or to
+          # a different room that shares the name). Consult that only after the
+          # walked graph has failed, so a reachable visit always wins; the
+          # result is provisional because the landing is unverified.
+          provisional = route_to_frontier(to, from: from, max_steps: max_steps)
+          return provisional if provisional
+
           # Not a dead end for the caller — the frontier is where the map runs
           # out, and "go stand there and look" is the actionable next move.
           reason = reachable_within?(from, goal_ids) ? :too_far : :no_route

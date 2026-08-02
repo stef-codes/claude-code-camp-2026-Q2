@@ -62,4 +62,55 @@ class TestScriptedExplorer < Minitest::Test
     assert_includes Boukensha::Mud::Explorer.render(ok: false, reason: :no_frontier),
                     "no_frontier"
   end
+
+  def test_prefers_frontier_exit_leading_somewhere_new
+    start = room("Crossroads", exits: %w[east west])
+    room("Old Square", exits: %w[west])
+    @store.record_exits!(start, dirs: %w[east west],
+                         targets: { "east" => "Old Square", "west" => "Fresh Trail" })
+
+    moves = []
+    mud = lambda do |name, args|
+      moves << args[:direction]
+      arrival("Fresh Trail", "e")
+    end
+
+    on_arrival = lambda do |look, from, direction, _text|
+      id = room(look.name, exits: look.exit_dirs)
+      @store.link_exit!(from, direction, id)
+      id
+    end
+
+    explorer = Boukensha::Mud::Explorer.new(
+      call_tool: mud, store: @store, on_arrival: on_arrival,
+      navigate: ->(**) { { ok: false, reason: :no_route } }
+    )
+
+    result = explorer.explore(from: start, max_rooms: 1)
+    assert result[:ok], result.inspect
+    assert_equal %w[west], moves, "east names a known room; west is new"
+  end
+
+  def test_goal_name_short_circuits_via_navigate
+    start = room("Here", exits: %w[north])
+    @store.record_exits!(start, dirs: %w[north], targets: { "north" => "The Cozy Bakery" })
+
+    navigate_calls = []
+    explorer = Boukensha::Mud::Explorer.new(
+      call_tool: ->(*) { flunk "explore must not walk frontier when navigate answers" },
+      store: @store,
+      on_arrival: ->(*) { flunk "no arrival" },
+      navigate: lambda { |destination:|
+        navigate_calls << destination
+        { ok: true, reason: :arrived, path: %w[north], stopped_at: start,
+          goal_name: "The Cozy Bakery", provisional: true }
+      }
+    )
+
+    result = explorer.explore(from: start, max_rooms: 3, goal_name: "bakery")
+    assert result[:ok]
+    assert_equal :found, result[:reason]
+    assert_equal ["bakery"], navigate_calls
+    assert_equal %w[north], result[:steps]
+  end
 end

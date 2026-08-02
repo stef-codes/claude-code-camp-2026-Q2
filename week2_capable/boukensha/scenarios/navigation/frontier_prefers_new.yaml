@@ -1,0 +1,40 @@
+version: 1
+id: frontier_prefers_new
+description: >
+  Two unwalked exits from the start room. East leads to a name already in the
+  map; west leads somewhere new. The scripted explorer must take west — not the
+  alphabetically first exit.
+
+initial_state:
+  start: Crossroads
+  rooms:
+    - name: Crossroads
+      description: Paths split toward the familiar and the unknown.
+      exits: [east, west]
+    - name: Old Square
+      description: A plaza the agent has already stood in.
+      exits: [west]
+  edges: []
+  frontier:
+    - [Crossroads, east, Old Square]
+    - [Crossroads, west, Fresh Trail]
+
+driver:
+  type: transcript
+  fixture: ../../test/fixtures/evaluation/frontier_prefers_new.json
+
+action:
+  type: explore
+  max_rooms: 1
+
+limits:
+  max_commands: 5
+
+assertions:
+  navigation_ok: true
+  moves_eq: [west]
+  final_room: Fresh Trail
+  deaths: 0
+
+scoring:
+  required: [navigation_ok, moves_eq, final_room]

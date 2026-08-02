@@ -40,6 +40,7 @@ tasks:
       - navigate                 # native: walk a route the agent already knows
       - explore                  # native: delegate frontier discovery to Explorer
       - relocalize               # native: delegate ambiguous-position recovery
+      - retrace                  # native: walk back along arrival breadcrumbs
       - examine
       - consider
       - "check(kind: score|inventory|equipment|gold|exits|time|weather|levels|wimpy|toggle|where)"
@@ -169,6 +170,11 @@ tools:
   # Scripted nearest-frontier explore composite (optional path alongside the
   # LLM Explorer subagent). Same move-only surface as navigate.
   explore:
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
+  # Walk back along in-session breadcrumbs. Move only — never invents a reverse
+  # edge; a refused opposite stops the retrace where you stand.
+  retrace:
     allow:
       - "move(direction: north|east|south|west|up|down)"
 

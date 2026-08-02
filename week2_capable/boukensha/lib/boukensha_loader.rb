@@ -246,6 +246,9 @@ module BoukenshaLoader
           explore_call_tool: Boukensha.tool_dispatcher(
             Boukensha::Mud::Explorer::NAME, logger: parent, initiator: "hook"
           ),
+          retrace_call_tool: Boukensha.tool_dispatcher(
+            "retrace", logger: parent, initiator: "hook"
+          ),
           look_candidates: candidates,
           logger: parent,
           journal: journal,
@@ -344,6 +347,18 @@ module BoukenshaLoader
             Boukensha.run_task(Boukensha::Tasks::Relocalizer, mud_hooks.ambiguity_brief,
                                logger: parent, hooks: mud_hooks)
           end
+        end
+
+        tool "retrace",
+             description:
+               "Walk back along the path you took to get here, using in-session " \
+               "arrival breadcrumbs. Prefers a known return exit; otherwise tries " \
+               "the conventional opposite direction as an action (never invents a " \
+               "map edge). Stops and reports where you are if the MUD refuses or " \
+               "the landing is not the previous room. Use when navigate has no " \
+               "route and unexplored exits from here are not useful.",
+             parameters: {} do
+          Boukensha::Mud::Hooks.render_retrace(mud_hooks.retrace)
         end
       rescue Boukensha::Mud::Memory::Store::Unavailable => e
         # No memory is a degraded agent, not a dead one: it explores exactly as

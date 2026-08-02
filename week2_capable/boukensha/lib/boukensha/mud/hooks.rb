@@ -82,7 +82,16 @@ module Boukensha
       # navigator's grants `move` and nothing else. Sharing one lambda would
       # mean whichever allowlist is wider silently governs both. Defaults to
       # `call_tool` so a test can inject one fake and drive everything.
+      # Conventional opposites for retrace. Tried as a MOVE ACTION only — never
+      # written into the store as a believed edge (RouteFinder TRAP 1).
+      OPPOSITES = {
+        "north" => "south", "south" => "north",
+        "east" => "west", "west" => "east",
+        "up" => "down", "down" => "up"
+      }.freeze
+
       def initialize(store:, call_tool:, navigate_call_tool: nil, explore_call_tool: nil,
+                     retrace_call_tool: nil,
                      look_candidates: nil,
                      logger: nil, journal: nil,
                      prefix: "tbamud__", turn_policy: false, warn_to: $stderr)
@@ -111,7 +120,8 @@ module Boukensha
         # walks and verifies; `navigator_arrival` below is the only place it can
         # learn which room it landed in, so position stays this class's property
         # exactly as it is for a move the model made itself.
-        @navigator = Navigator.new(call_tool: navigate_call_tool || call_tool,
+        move_tool = navigate_call_tool || call_tool
+        @navigator = Navigator.new(call_tool: move_tool,
                                    store: store, prefix: prefix,
                                    logger: logger, on_arrival: method(:navigator_arrival))
 
@@ -121,6 +131,10 @@ module Boukensha
           on_arrival: method(:navigator_arrival),
           navigate: ->(destination:) { navigate(destination: destination) }
         )
+        # Retrace walks under `tools.retrace.allow` — move only, same surface as
+        # navigate. Defaults to the navigate dispatcher so tests with one fake
+        # keep working.
+        @retrace_call_tool = retrace_call_tool || navigate_call_tool || call_tool
         @localizer     = Localizer.new(store)
         @disambiguator = Disambiguator.new(store)
 
@@ -129,6 +143,11 @@ module Boukensha
         @arrival        = nil     # { look:, direction:, from_room_id: } after a movement
         @current_room_id = nil    # nil ⇒ cold: nothing has told us where we are
         @live            = []     # the entity lines last actually observed here
+        # Arrival breadcrumbs for retrace: {from:, direction:, to:}. In-memory
+        # only — never a reverse edge in the store. `@suppress_trail` keeps
+        # retrace's own return steps from appending while we unwind.
+        @trail           = []
+        @suppress_trail  = false
         # Is the character sheet believed current? False at process start (a
         # fresh login, or a reconnect after one) and again whenever something
         # has moved gold, experience or level without printing the new totals.
@@ -142,7 +161,7 @@ module Boukensha
         @candidate_room_ids  = []  # ambiguous set still in play
       end
 
-      attr_reader :mode, :location_candidates, :current_room_id
+      attr_reader :mode, :location_candidates, :current_room_id, :trail
 
       # ---------- before_turn ---------------------------------------------
 
@@ -292,6 +311,82 @@ module Boukensha
           enter_mode(Mode::NAVIGATING)
           score_exploration(result, before)
           result
+        end
+      end
+
+      # Walk back along in-session arrival breadcrumbs. Never invents a reverse
+      # edge in the store: a known return exit is walked if present; otherwise
+      # the conventional opposite is ATTEMPTED as an action and after_tool /
+      # link_arrival record whatever the MUD actually confirmed.
+      def retrace(max_steps: Explorer::DEFAULT_MAX_STEPS)
+        guard do
+          unless @current_room_id
+            next { ok: false, reason: :no_position, steps: [], stopped_at: nil }
+          end
+          if @trail.empty?
+            next { ok: false, reason: :empty_trail, steps: [], stopped_at: @current_room_id }
+          end
+
+          enter_mode(Mode::NAVIGATING)
+          steps = []
+          max_steps.times do
+            break if @trail.empty?
+
+            crumb = @trail.last
+            unless @current_room_id == crumb[:to]
+              next({ ok: false, reason: :lost_trail, steps: steps,
+                     stopped_at: @current_room_id, detail: "expected ##{crumb[:to]}" })
+            end
+
+            direction = return_direction(crumb)
+            unless direction
+              next({ ok: false, reason: :no_return, steps: steps,
+                     stopped_at: @current_room_id,
+                     detail: "no way back toward ##{crumb[:from]}" })
+            end
+
+            text = @retrace_call_tool.call("#{@prefix}move", { direction: direction })
+            look = RoomParser.parse_look(text)
+            unless look.complete?
+              @store.record_exit_failure!(@current_room_id, direction) if @store.respond_to?(:record_exit_failure!)
+              next({ ok: false, reason: :blocked, steps: steps, stopped_at: @current_room_id,
+                     detail: direction, blocked_by: direction })
+            end
+
+            @suppress_trail = true
+            begin
+              navigator_arrival(look, @current_room_id, direction, text)
+            ensure
+              @suppress_trail = false
+            end
+            steps << direction
+            @trail.pop # outbound crumb we just walked back from
+
+            unless @current_room_id == crumb[:from]
+              next({ ok: false, reason: :wrong_arrival, steps: steps,
+                     stopped_at: @current_room_id,
+                     detail: "wanted ##{crumb[:from]}, landed ##{@current_room_id}" })
+            end
+          end
+
+          { ok: true, reason: :retraced, steps: steps, stopped_at: @current_room_id,
+            steps_walked: steps.length }
+        end
+      end
+
+      def self.render_retrace(result)
+        return "retrace ✗ #{result[:reason]}" unless result.is_a?(Hash)
+
+        if result[:ok]
+          line = +"retrace ✓ #{result[:steps].length} step#{'s' if result[:steps].length != 1}"
+          line << " · #{result[:steps].join(', ')}" if result[:steps]&.any?
+          line
+        else
+          at = result[:stopped_at] && "(##{result[:stopped_at]})"
+          line = +"retrace ✗ #{result[:reason]}"
+          line << " at #{at}" if at
+          line << " — #{result[:detail]}" if result[:detail]
+          line
         end
       end
 
@@ -630,6 +725,14 @@ module Boukensha
         end
         @store.link_exit!(from_id, direction, room[:id])
 
+        # The only place that knows "came from X going D, landed in Y". Trail
+        # is in-memory; inventing a reverse edge in the store would violate
+        # RouteFinder TRAP 1. Retrace suppresses this so return steps do not
+        # push while we pop.
+        unless @suppress_trail
+          @trail << { from: from_id, direction: direction.to_s, to: room[:id] }
+        end
+
         # `check(exits)` said this way led somewhere else. Walking it is the
         # stronger evidence — a room cannot move, and the exits table can be
         # stale, mis-parsed, or (as with "Too dark to tell.") never a name at
@@ -641,6 +744,21 @@ module Boukensha
         log_conflict("exit_name_mismatch", from: from_id, direction: direction,
                                            expected: known[:target_name], found: room[:name])
         @store.rename_exit_target!(from_id, direction, room[:name])
+      end
+
+      # Prefer a walked exit whose target is the previous room; otherwise try
+      # the conventional opposite as an action (never as a stored belief).
+      def return_direction(crumb)
+        here = crumb[:to]
+        previous = crumb[:from]
+        exits = @store.exits_for(here)
+        known = exits.find do |exit|
+          exit[:target_room_id] == previous &&
+            RouteFinder::WALKABLE.include?(exit[:direction].to_s)
+        end
+        return known[:direction].to_s if known
+
+        OPPOSITES[crumb[:direction].to_s]
       end
 
       # =========================== entities =================================

@@ -90,7 +90,7 @@ class TestEvaluationScenario < Minitest::Test
   end
 
   def test_an_unsupported_action_lists_what_this_build_can_do
-    e = refuses("unsupported action", action: { "type" => "explore", "destination" => "B" })
+    e = refuses("unsupported action", action: { "type" => "teleport", "destination" => "B" })
 
     assert_includes e.message, "navigate"
   end
@@ -180,7 +180,7 @@ class TestEvaluationScenario < Minitest::Test
   def test_every_shipped_scenario_parses
     paths = Boukensha::Evaluation.scenarios_in(File.expand_path("../scenarios", __dir__))
 
-    assert_equal 3, paths.length, "the three navigation scenarios should be present"
+    assert_equal 6, paths.length, "the six navigation scenarios should be present"
     paths.each { |path| assert_kind_of S, S.load(path) }
   end
 end

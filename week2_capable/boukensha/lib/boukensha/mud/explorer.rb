@@ -59,13 +59,21 @@ module Boukensha
         added   = 0
         found   = nil
 
+        # If any exit line (or walked path) already answers the goal name,
+        # navigate there instead of walking the frontier one room at a time.
+        # RouteFinder's island fallback makes a named neighbour one provisional
+        # step rather than no_route.
+        if goal_name && (shortcut = try_goal_navigate(goal_name, from: current))
+          return shortcut
+        end
+
         max_rooms.times do
           if goal_name && (hit = name_match(current, goal_name))
             found = hit
             break
           end
 
-          frontier = nearest_frontier(current)
+          frontier = nearest_frontier(current, goal_name: goal_name)
           unless frontier
             return { ok: added.positive?, reason: added.positive? ? :budget_or_done : :no_frontier,
                      rooms_added: added, steps: steps, stopped_at: current, found: found }.compact
@@ -104,11 +112,25 @@ module Boukensha
           stopped_at: current, found: found }.compact
       end
 
+      def try_goal_navigate(goal_name, from:)
+        nav = @navigate.call(destination: goal_name)
+        return nil unless nav.is_a?(Hash) && nav[:ok]
+
+        stopped = nav[:stopped_at] || from
+        hit = name_match(stopped, goal_name) || nav[:goal_name] || goal_name
+        { ok: true, reason: :found, rooms_added: 0, steps: Array(nav[:path]),
+          stopped_at: stopped, found: hit }.compact
+      end
+
       # Closest room (by hop count) that still has an unwalked exit, preferring
-      # the current room when it qualifies.
-      def nearest_frontier(from)
+      # the current room when it qualifies. Exit pick is ranked (goal → new →
+      # alphabetical), never the bare first of an unsorted list.
+      def nearest_frontier(from, goal_name: nil)
         here = @store.frontier_exits_for(from)
-        return { room_id: from, direction: here.first[:direction] } if here.any?
+        if here.any?
+          pick = pick_frontier(here, goal_name: goal_name)
+          return { room_id: from, direction: pick[:direction], target_name: pick[:target_name] }
+        end
 
         # BFS over linked edges until we find a room with frontier.
         adjacency = @finder.send(:adjacency_list)
@@ -117,9 +139,12 @@ module Boukensha
         until queue.empty?
           current = queue.shift
           frontier = @store.frontier_exits_for(current)
-          return { room_id: current, direction: frontier.first[:direction] } if frontier.any?
+          if frontier.any?
+            pick = pick_frontier(frontier, goal_name: goal_name)
+            return { room_id: current, direction: pick[:direction], target_name: pick[:target_name] }
+          end
 
-          adjacency.fetch(current, []).each do |_dir, target|
+          adjacency.fetch(current, []).each do |_dir, target, _cost|
             next if seen.key?(target)
 
             seen[target] = true
@@ -127,6 +152,36 @@ module Boukensha
           end
         end
         nil
+      end
+
+      # Total order: goal-matching target_name, then names not already in the
+      # rooms table, then everything else — each band alphabetical by direction
+      # so a replan cannot silently flip between equally-good exits.
+      def pick_frontier(exits, goal_name: nil)
+        exits.min_by do |exit|
+          name = exit[:target_name].to_s
+          rank = if goal_name && target_matches_goal?(name, goal_name)
+                   0
+                 elsif !name.empty? && !known_room_name?(name)
+                   1
+                 else
+                   2
+                 end
+          [ rank, exit[:direction].to_s ]
+        end
+      end
+
+      def known_room_name?(name)
+        @store.rooms_by_name(name.to_s).any?
+      rescue StandardError
+        false
+      end
+
+      def target_matches_goal?(target_name, goal_name)
+        needle = goal_name.to_s.strip.downcase
+        return false if needle.empty?
+
+        target_name.to_s.downcase.include?(needle)
       end
 
       def name_match(room_id, goal_name)

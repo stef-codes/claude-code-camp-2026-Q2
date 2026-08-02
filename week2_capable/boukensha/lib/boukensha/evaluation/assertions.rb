@@ -48,6 +48,14 @@ module Boukensha
         "steps_eq"       => ->(m, want) { [ m[:steps].to_i == want.to_i, m[:steps] ] },
         "replans_lte"    => ->(m, want) { [ m[:replans].to_i <= want.to_i, m[:replans] ] },
         "replans_eq"     => ->(m, want) { [ m[:replans].to_i == want.to_i, m[:replans] ] },
+        # Exact move sequence the action issued (directions only).
+        "moves_eq"       => lambda { |m, want|
+          got = Array(m[:moves]).map(&:to_s)
+          want = Array(want).map(&:to_s)
+          [ got == want, got ]
+        },
+        # Frontier / island routes mark the last step unverified.
+        "provisional"    => ->(m, want) { [ !!m[:provisional] == !!want, m[:provisional] ] },
         # Counts only the calls the ACTION made; the cold look that establishes
         # position is setup and is reported separately.
         "tool_calls_lte" => ->(m, want) { [ m[:tool_calls].to_i <= want.to_i, m[:tool_calls] ] },

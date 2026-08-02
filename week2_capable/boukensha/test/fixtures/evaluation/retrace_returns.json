@@ -1,0 +1,9 @@
+{
+  "_comment": "Walk north into Neighbour, retrace via opposite south. Reverse edge recorded only after the MUD confirms.",
+  "responses": {
+    "look": [{ "room": "Origin" }],
+    "poll": "",
+    "move:north": [{ "room": "Neighbour" }],
+    "move:south": [{ "room": "Origin" }]
+  }
+}

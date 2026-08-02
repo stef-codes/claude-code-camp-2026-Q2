@@ -46,7 +46,7 @@ module Boukensha
 
       Edge = Struct.new(:from, :direction, :to, keyword_init: true)
 
-      attr_reader :id, :description, :path, :rooms, :edges, :start, :action,
+      attr_reader :id, :description, :path, :rooms, :edges, :frontier, :start, :action,
                   :assertions, :required, :recovery, :expected_steps,
                   :max_commands, :max_replans, :responses
 
@@ -110,6 +110,10 @@ module Boukensha
         end
 
         @edges = Array(state["edges"]).map { |edge| build_edge(edge) }
+        # Named unwalked exits. `to` may be a room that exists (island: same
+        # name, no walked path) or a name not yet visited — only `from` must
+        # be a declared room, and the direction must appear on its exits line.
+        @frontier = Array(state["frontier"]).map { |edge| build_frontier(edge) }
         @start = state["start"].to_s
         room!(@start)
       end
@@ -146,6 +150,20 @@ module Boukensha
         e
       end
 
+      def build_frontier(edge)
+        from, direction, to = edge.is_a?(Array) ? edge : edge.values_at("from", "direction", "to")
+        e = Edge.new(from: from.to_s, direction: direction.to_s, to: to.to_s)
+        raise Invalid, "#{@id}: frontier #{edge.inspect} has an unknown direction" unless DIRECTIONS.include?(e.direction)
+        raise Invalid, "#{@id}: frontier #{edge.inspect} has no target name" if e.to.empty?
+
+        room!(e.from)
+        unless room!(e.from).exits.include?(e.direction)
+          raise Invalid, "#{@id}: frontier #{e.from} #{e.direction} → #{e.to} — " \
+                         "#{e.from.inspect} does not list #{e.direction} among its exits"
+        end
+        e
+      end
+
       def load_action!
         action = @data["action"]
         raise Invalid, "#{@id}: action is required" unless action.is_a?(Hash)
@@ -156,8 +174,19 @@ module Boukensha
                          "(this build supports #{Runner::ACTIONS.keys.join(', ')})"
         end
 
-        @action = { type: type, destination: action["destination"].to_s }
-        raise Invalid, "#{@id}: action.destination is required" if @action[:destination].empty?
+        @action = {
+          type: type,
+          destination: action["destination"].to_s,
+          max_rooms: action["max_rooms"]&.to_i,
+          goal_name: action["goal_name"]&.to_s
+        }
+        if type == "navigate" && @action[:destination].empty?
+          raise Invalid, "#{@id}: action.destination is required"
+        end
+        if type == "retrace" && @action[:destination].empty?
+          raise Invalid, "#{@id}: action.destination is required " \
+                         "(navigate out to this room, then retrace)"
+        end
       end
 
       def load_limits!

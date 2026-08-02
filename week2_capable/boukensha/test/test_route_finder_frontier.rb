@@ -124,6 +124,24 @@ class TestRouteFinderFrontier < Minitest::Test
     refute route.provisional
   end
 
+  # The island: a visited room matches the name, but no walked path reaches it.
+  # Before the fallback, this was no_route even with a named frontier exit one
+  # step away — Dirt Road (#71) → "Edge of a Clearing".
+  def test_unreachable_visited_room_falls_back_to_named_frontier
+    island = room("Dirt Road")
+    visited = room("Edge of a Clearing")
+    elsewhere = room("Somewhere Else")
+    link(elsewhere, "west", visited)
+    frontier(island, "south", "Edge of a Clearing")
+
+    route = finder.route(from: island, to: "Edge of a Clearing")
+
+    assert route.ok, "a named exit one step away must beat giving up"
+    assert route.provisional, "landing through an unwalked exit is unverified"
+    assert_equal %w[south], route.steps
+    assert_nil route.goal_id
+  end
+
   def test_an_unroutable_frontier_name_still_fails_as_before
     a = room("A"); b = room("B")
     frontier(b, "east", "Unreachable")   # b is not connected to a

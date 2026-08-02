@@ -28,7 +28,17 @@ module Boukensha
       # validation reads these keys, so an unsupported action is refused at load
       # time with the supported list in the message.
       ACTIONS = {
-        "navigate" => ->(hooks, scenario) { hooks.navigate(destination: scenario.action[:destination]) }
+        "navigate" => ->(hooks, scenario) { hooks.navigate(destination: scenario.action[:destination]) },
+        "explore"  => lambda { |hooks, scenario|
+          hooks.scripted_explore(max_rooms: scenario.action[:max_rooms] || 1,
+                                 goal_name: scenario.action[:goal_name])
+        },
+        # Navigate out (optional destination), then unwind breadcrumbs.
+        "retrace"  => lambda { |hooks, scenario|
+          dest = scenario.action[:destination]
+          hooks.navigate(destination: dest) if dest && !dest.empty?
+          hooks.retrace
+        }
       }.freeze
 
       # The Journal's interface, in memory.
@@ -140,12 +150,24 @@ module Boukensha
         @scenario.edges.each do |edge|
           store.link_exit!(ids.fetch(edge.from), edge.direction, ids.fetch(edge.to))
         end
+
+        # Named but unwalked exits: target_name without target_room_id. The
+        # island / frontier scenarios need this — an edge would link and hide
+        # the gap under test.
+        @scenario.frontier.each do |edge|
+          id = ids.fetch(edge.from)
+          store.record_exits!(id, dirs: [ edge.direction ],
+                              targets: { edge.direction => edge.to })
+        end
         ids
       end
 
       def exit_targets(room)
-        @scenario.edges.select { |e| e.from == room.name }
-                 .to_h { |e| [ e.direction, e.to ] }
+        linked = @scenario.edges.select { |e| e.from == room.name }
+                          .to_h { |e| [ e.direction, e.to ] }
+        named  = @scenario.frontier.select { |e| e.from == room.name }
+                          .to_h { |e| [ e.direction, e.to ] }
+        linked.merge(named)
       end
 
       def build_hooks(store, driver, journal)
@@ -173,12 +195,19 @@ module Boukensha
         names = room_ids.invert
         final_id = hooks.current_room_id
 
+        steps = if result.key?(:steps_walked)
+                  result[:steps_walked].to_i
+                else
+                  Array(result[:steps]).length
+                end
+
         {
           navigation_ok: !!result[:ok],
           reason: result[:reason].to_s,
-          steps: result[:steps_walked].to_i,
+          steps: steps,
           steps_planned: result[:steps_planned].to_i,
           replans: result[:replans].to_i,
+          provisional: !!result[:provisional],
           tool_calls: driver.calls.length - setup_calls,
           setup_tool_calls: setup_calls,
           moves: driver.calls.drop(setup_calls).select { |(t, _)| t == "move" }

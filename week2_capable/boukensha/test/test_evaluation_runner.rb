@@ -91,6 +91,33 @@ class TestEvaluationRunner < Minitest::Test
                  "the second step comes from the replan, not the original route"
   end
 
+  def test_island_recovery_takes_the_named_frontier_exit
+    result = run_scenario("island_recovery")
+
+    assert result.passed, result.to_s
+    assert result.metrics[:provisional]
+    assert_equal %w[south], result.metrics[:moves]
+    assert_equal "Edge of a Clearing", result.metrics[:final_room]
+  end
+
+  def test_frontier_prefers_an_exit_leading_somewhere_new
+    result = run_scenario("frontier_prefers_new")
+
+    assert result.passed, result.to_s
+    assert_equal %w[west], result.metrics[:moves],
+                 "east names Old Square (already visited); west must win"
+    assert_equal "Fresh Trail", result.metrics[:final_room]
+  end
+
+  def test_retrace_returns_to_origin_and_records_confirmed_return_edge
+    result = run_scenario("retrace_returns")
+
+    assert result.passed, result.to_s
+    assert_equal "Origin", result.metrics[:final_room]
+    assert_equal %w[north south], result.metrics[:moves]
+    assert_equal "Origin", result.metrics[:exits]["Neighbour:south"]
+  end
+
   # The repair and the penalty are two facts, and one assertion used to claim
   # both. Deleting `demote_exit!` left the map correctly retargeted — the
   # relink comes from `link_exit!`, which `link_arrival` calls unconditionally —

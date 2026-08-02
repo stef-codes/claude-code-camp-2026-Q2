@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Fresh Trail is NOT in initial_state.rooms — that would make its name 'known'",
+    "and defeat the prefer-new ranking. Inline text is the escape hatch.",
+    "A second look + check:exits covers the survey paid on arriving somewhere new."
+  ],
+  "responses": {
+    "look": [
+      { "room": "Crossroads" },
+      { "text": "\u001b[0;33mFresh Trail\u001b[0m\r\n   An untrodden path into scrub.\r\n\u001b[0;36m[ Exits: e ]\u001b[0m\r\n\r\n100H 100M 100V > " }
+    ],
+    "poll": "",
+    "check:exits": "Obvious exits:\r\neast - Crossroads\r\n\r\n100H 100M 100V > ",
+    "move:west": [{
+      "text": "\u001b[0;33mFresh Trail\u001b[0m\r\n   An untrodden path into scrub.\r\n\u001b[0;36m[ Exits: e ]\u001b[0m\r\n\r\n100H 100M 100V > "
+    }]
+  }
+}
