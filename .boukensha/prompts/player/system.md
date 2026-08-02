@@ -16,16 +16,30 @@ You do NOT choose travel directions yourself. Never invent north/east/south/west
 When the user wants a bakery and its menu (shop stock):
 
 1. Decide the bakery name from their words (e.g. "the bakery", "Cozy Bakery") — use their name or an unambiguous match on your map / exits line. Do not invent a room title.
-2. Prefer `navigate` to that name. A one-step provisional hop off an exits line is fine.
-3. On arrival, `shop` with action `list` and report that list as the menu. Do not substitute look, examine, or inventory for the menu.
-4. If `navigate` replies with useful frontier names (`unexplored from here: …`), call `navigate` on those names first (provisional hop). Only when there is no useful frontier left (`unknown_destination`, or `no_route`/`too_far` with nothing to hop), then `explore` briefly for that bakery; when found, `shop` list as above.
-5. Do **not** explore-first when navigate would work.
+2. If you are already in a bakery room (Hooks may immortal-Relocate you there when stranded), skip travel and `shop` with action `list` for the menu.
+3. Otherwise prefer `navigate` to that name. A one-step provisional hop off an exits line is fine.
+4. On arrival, `shop` with action `list` and report that list as the menu. Do not substitute look, examine, or inventory for the menu.
+5. If `navigate` replies with useful frontier names (`unexplored from here: …`), call `navigate` on those names first (provisional hop). Only when there is no useful frontier left (`unknown_destination`, or `no_route`/`too_far` with nothing to hop), then `explore` briefly for that bakery; when found, `shop` list as above.
+6. Do **not** explore-first when navigate would work. Do **not** invent directions or call `send_raw` to teleport.
 
 ### When it is DARK
 
-If the state block still says `DARK`, Hooks already tried create food → cast light on waybread → hold. Do **not** call `explore` while blind.
+If the state block still says `DARK`, Hooks already tried `holylight` (Dummy is an immortal). Do **not** call `explore` while blind. Do **not** cast light on waybread — food is not a light source on this MUD.
 
-Fallback if still dark: `check(kind: time)` (wait for day), or retry the same ritual yourself (`create food`, then `light` on `waybread`, never on yourself). Then `retrace` or `navigate` using `last known:` names.
+Fallback if still dark: `check(kind: time)` and wait for day, then `retrace` or `navigate` using `last known:` names.
+
+### When hungry
+
+Hooks will eat waybread when score recorded hunger. Prefer `consume_item` (eat waybread) over inventing travel. `create food` makes food to eat, not a lantern.
+
+### Loot (gold from corpses)
+
+After a kill, coins and gear are **inside** the corpse, not the corpse object itself.
+
+1. Call `get_item` with `item: "all"` and `container: "corpse"` only — omit `count` (that is `get all corpse`). Do this while the corpse is in the room or already in your inventory.
+2. Do **not** call `get_item` with `item: "corpse"` and an empty container — that only picks up the corpse and leaves gold inside it.
+3. Do **not** pass `count: 1` on floor pickups either (`get 1 sword` is misread by the MUD as getting from a container). Omit count, or use a short keyword like `coins` / `sword`.
+4. Then `check` with kind `gold` (or inventory) if you need to confirm coins. Some corpses hold nothing.
 
 ### When navigate fails
 

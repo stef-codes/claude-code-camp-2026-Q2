@@ -234,6 +234,7 @@ module BoukenshaLoader
         # `navigate` tool below has to reach the same instance — position lives
         # on it, and a second Hooks would navigate from a different idea of
         # where the agent is standing.
+        bakery = cfg.dig(:mud, :landmarks, :bakery) || {}
         mud_hooks = Boukensha::Mud::Hooks.new(
           store: store,
           call_tool: call_tool,
@@ -252,6 +253,11 @@ module BoukenshaLoader
           illuminate_call_tool: Boukensha.tool_dispatcher(
             "illuminate", logger: parent, initiator: "hook"
           ),
+          relocate_call_tool: Boukensha.tool_dispatcher(
+            "relocate", logger: parent, initiator: "hook"
+          ),
+          bakery_room_vnum: bakery[:room] || bakery["room"],
+          bakery_destination: bakery[:name] || bakery["name"] || "The Bakery",
           look_candidates: candidates,
           logger: parent,
           journal: journal,

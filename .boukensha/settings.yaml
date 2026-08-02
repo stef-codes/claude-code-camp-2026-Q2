@@ -92,6 +92,12 @@ mud:
   port: 4000
   username: dummy
   password: helloworld
+  # Immortal Relocate targets (Hooks `goto` when stranded on a bakery goal).
+  # Midgaard zone 30 — room #3009 "The Bakery" (not the Cozy Bakery start).
+  landmarks:
+    bakery:
+      name: The Bakery
+      room: 3009
 
 # Tracing. Secrets and the OTLP endpoint live in .boukensha/.env (gitignored).
 # Contract is pinned to OpenTelemetry GenAI semantic conventions 1.37.0 --
@@ -114,16 +120,14 @@ observability:
   # prompt can be edited, versioned and rolled back without a redeploy, and so a
   # trace can say WHICH version produced it.
   #
-  # A separate switch from `otel.enabled` on purpose: tracing is passive,
-  # whereas this puts a network call in front of the first model call of every
-  # process. It is safe to leave on — the registry returns nil on any failure
-  # (no credentials, timeout, 404, bad body) and prompt resolution falls back to
-  # the file that shipped — but "safe" is not the same as "free".
+  # OFF for now: Langfuse `boukensha-player-system` @ production was a short
+  # stale copy that omitted the Bakery visit recipe / travel rules. Until that
+  # prompt is re-pushed from `.boukensha/prompts/player/system.md`, load the
+  # local file. Re-enable after syncing (or set BOUKENSHA_LANGFUSE_PROMPTS=1).
   #
   # Prompts are looked up as `boukensha-<task>-system` at label `production`.
-  # Push the current file with the Langfuse API, or edit it in the UI.
   prompts:
-    enabled: true
+    enabled: false
 
 # Allowlists for the framework's OWN automatic tool users -- the composites that
 # run outside the model's turn. Each key is a `Boukensha.tool_dispatcher(<key>)`
@@ -177,12 +181,19 @@ tools:
   retrace:
     allow:
       - "move(direction: north|east|south|west|up|down)"
-  # Outdoor night / pitch black. `light` must be cast on an object — create a
-  # waybread, light it, hold it. Missing this key makes illuminate a silent no-op.
+  # Outdoor night / pitch black. Dummy (implementor) uses holylight via send_raw.
+  # create food → light waybread does NOT work on tbaMUD (food isn't a light
+  # target). consume_item + cast create food cover hunger (nourish).
   illuminate:
     allow:
+      - send_raw
       - cast_spell
-      - "equip_item(action: hold)"
+      - "consume_item(mode: eat)"
+  # Immortal Relocate (Hooks only): goto a landmark when a bakery goal has no
+  # routable path. Not a player tool — send_raw stays off the player allowlist.
+  relocate:
+    allow:
+      - send_raw
 
 # Tools for the agent come from MCP servers listed here (boukensha ships none
 # of its own). The `mud` server is the Ruby mud-manager daemon spawned over

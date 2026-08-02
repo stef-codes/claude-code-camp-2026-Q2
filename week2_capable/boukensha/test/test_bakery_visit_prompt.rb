@@ -15,13 +15,17 @@ class TestBakeryVisitPrompt < Minitest::Test
 
     assert text, "expected player system override under #{USER_PROMPTS}"
     assert_match(/### Bakery visit \(menu\)/, text)
-    assert_match(/Prefer `navigate`/, text)
+    assert_match(/Otherwise prefer `navigate`/, text)
     assert_match(/provisional hop/, text)
     assert_match(/`shop` with action `list`/, text)
     assert_match(/look, examine, or inventory/, text)
     assert_match(/useful frontier/, text)
     assert_match(/then `explore` briefly/, text)
     assert_match(/Do \*\*not\*\* explore-first when navigate would work/, text)
+    assert_match(/### Loot \(gold from corpses\)/, text)
+    assert_match(/item: "all"/, text)
+    assert_match(/container: "corpse"/, text)
+    assert_match(/get all corpse/, text)
   end
 
   def test_default_player_prompt_includes_bakery_visit_recipe
@@ -36,5 +40,7 @@ class TestBakeryVisitPrompt < Minitest::Test
     assert_match(/look, examine, or inventory/, text)
     assert_match(/useful frontier/, text)
     assert_match(/Do \*\*not\*\* explore-first when navigate would work/, text)
+    assert_match(/### Loot \(gold from corpses\)/, text)
+    assert_match(/get all corpse/, text)
   end
 end

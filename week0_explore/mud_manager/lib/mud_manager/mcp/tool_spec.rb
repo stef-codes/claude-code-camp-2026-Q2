@@ -189,11 +189,21 @@ module MudManager
           # ── Inventory & equipment ─────────────────────────────────────────
           {
             name: "get_item", category: "inventory", mode: :primitive,
-            description: "Pick up an item from the room or from a container.",
+            description:
+              "Pick up an item from the room or from a container. " \
+              "To loot a corpse (coins/gear), set item to \"all\" and container to \"corpse\" " \
+              "and omit count (get all corpse). Do not get item \"corpse\" with an empty " \
+              "container — that picks up the corpse object and leaves loot inside it. " \
+              "Omit count for ordinary floor pickup; count>1 means the Nth match (get 2.sword), " \
+              "not a quantity — never pass count: 1.",
             params: {
-              "item"      => pr.(type: "string",  description: "Name of the item to get", required: true),
-              "container" => pr.(type: "string",  description: "Container to get it from (optional)"),
-              "count"     => pr.(type: "integer", description: "Number of items to get (optional)")
+              "item"      => pr.(type: "string",
+                                 description: "Name of the item to get, or \"all\" to empty a container",
+                                 required: true),
+              "container" => pr.(type: "string",
+                                 description: "Container to get from (e.g. \"corpse\"); omit for room floor"),
+              "count"     => pr.(type: "integer",
+                                 description: "Nth matching object (get N.item). Omit for normal pickup; do not send 1.")
             },
             build: ->(a) { P.get(a["item"], container: present(a["container"]), count: present(a["count"])) }
           },

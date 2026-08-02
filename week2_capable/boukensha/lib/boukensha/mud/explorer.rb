@@ -41,8 +41,8 @@ module Boukensha
           line << " · found #{result[:found]}" if result[:found]
           line
         elsif result[:reason].to_s == "too_dark"
-          "explore ✗ too_dark — get light first: cast create food, then cast light on waybread " \
-            "(not on yourself); hold the waybread if needed, then retry"
+          "explore ✗ too_dark — get light first (holylight if immortal, or wait for day); " \
+            "do not cast light on waybread"
         else
           "explore ✗ #{result[:reason]}#{result[:detail] && " — #{result[:detail]}"}"
         end

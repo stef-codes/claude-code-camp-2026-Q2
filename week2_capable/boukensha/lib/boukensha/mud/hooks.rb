@@ -92,6 +92,8 @@ module Boukensha
 
       def initialize(store:, call_tool:, navigate_call_tool: nil, explore_call_tool: nil,
                      retrace_call_tool: nil, illuminate_call_tool: nil,
+                     relocate_call_tool: nil,
+                     bakery_room_vnum: nil, bakery_destination: "The Bakery",
                      look_candidates: nil,
                      logger: nil, journal: nil,
                      prefix: "tbamud__", turn_policy: false, warn_to: $stderr)
@@ -135,9 +137,17 @@ module Boukensha
         # navigate. Defaults to the navigate dispatcher so tests with one fake
         # keep working.
         @retrace_call_tool = retrace_call_tool || navigate_call_tool || call_tool
-        # Outdoor night: create food → cast light on waybread → hold. Own
-        # allowlist (`tools.illuminate.allow`) so room_survey stays look-only.
+        # Outdoor night: holylight (immortal) via send_raw; nourish eats waybread.
+        # Own allowlist (`tools.illuminate.allow`) so room_survey stays look-only.
         @illuminate_call_tool = illuminate_call_tool
+        # Immortal Relocate: goto landmark when bakery goal has no routable path.
+        # Own allowlist (`tools.relocate.allow`) — not a player tool.
+        @relocate_call_tool = relocate_call_tool
+        @bakery_room_vnum   = bakery_room_vnum&.to_i
+        @bakery_room_vnum   = nil if @bakery_room_vnum && @bakery_room_vnum <= 0
+        @bakery_destination = bakery_destination.to_s.strip
+        @bakery_destination = "The Bakery" if @bakery_destination.empty?
+        @bakery_landed      = false
         @localizer     = Localizer.new(store)
         @disambiguator = Disambiguator.new(store)
 
@@ -267,13 +277,23 @@ module Boukensha
         guard do
           during("position_refresh", "before_model") do
             look = arrival_look || cold_look
-            # Outdoor night: Hooks gets light itself so the model is not stuck
-            # casting on "me" with an empty pack.
+            # Outdoor night: Hooks gets light itself. create-food→light-waybread is
+            # a dead end on tbaMUD (food is not a light target / not holdable).
             if @dark
               lit = during("illuminate", "before_model") { ensure_lit! }
               look = lit if lit&.complete?
             end
+            # Need live position before bakery_routable? (map-island check).
             resolve_position(look) if look
+            # Bakery goal + map island: immortal goto Midgaard bakery, then look.
+            if bakery_goal?(context) && !bakery_routable?
+              landed = during("relocate", "before_model") { ensure_near_bakery! }
+              if landed&.complete?
+                look = landed
+                resolve_position(look)
+              end
+            end
+            during("nourish", "before_model") { ensure_fed! } if hungry?
           end
 
           # Spans nothing but store reads — no MUD I/O at all — and is bracketed
@@ -287,31 +307,130 @@ module Boukensha
         nil
       end
 
-      # tbaMUD `light` needs an object target. Empty inventory + cast on self is
-      # why the agent stayed dark. Sequence: create food → light waybread → hold.
-      # Returns the post-attempt Look (may still be incomplete). No-op without
-      # an illuminate dispatcher or when not currently dark.
+      # Outdoor pitch black on tbaMUD: `cast light` cannot target waybread
+      # (food), and waybread cannot be held — that ritual only drains mana.
+      # Dummy is an implementor: `holylight` sees in the dark. Mortals wait for
+      # day. Returns the post-attempt Look (may still be incomplete).
       def ensure_lit!
         return nil unless @dark
         return nil unless @illuminate_call_tool
 
-        illuminate_call("cast_spell", spell: "create food")
-        illuminate_call("cast_spell", spell: "light", target: "waybread")
-        illuminate_call("equip_item", action: "hold", item: "waybread")
+        holy = illuminate_call("send_raw", command: "holylight").to_s
+        # holylight toggles — if we turned it off, flip once more.
+        if holy.match?(/mode off/i)
+          illuminate_call("send_raw", command: "holylight")
+        end
 
         text = call(:look)
         look = RoomParser.parse_look(text)
         observe_visibility!(text, look)
         look
       rescue StandardError => e
-        @warn_to&.puts "[mud_hooks] illuminate failed: #{e.class}: #{e.message}"
+        hook_warn("illuminate failed: #{e.class}: #{e.message}")
         nil
       end
+
+      # Waybread from create food is food, not a lantern. When score recorded
+      # hunger, eat (create one loaf first if the pack has none).
+      def ensure_fed!
+        return nil unless @illuminate_call_tool
+
+        eat = illuminate_call("consume_item", item: "waybread", mode: "eat").to_s
+        if eat.match?(/don'?t|do not|can't|cannot|not carrying|no waybread/i)
+          illuminate_call("cast_spell", spell: "create food")
+          eat = illuminate_call("consume_item", item: "waybread", mode: "eat").to_s
+        end
+        eat
+      rescue StandardError => e
+        hook_warn("nourish failed: #{e.class}: #{e.message}")
+        nil
+      end
+
+      # Immortal Relocate to the Midgaard bakery landmark when a bakery/menu
+      # goal has no walkable route on the agent's map (wilderness island).
+      # Returns the post-goto Look, or nil if skipped / failed.
+      def ensure_near_bakery!
+        return nil unless @relocate_call_tool && @bakery_room_vnum
+        return nil if @bakery_landed
+        return nil if bakery_routable?
+
+        relocate_call("send_raw", command: "goto #{@bakery_room_vnum}")
+        # Position is stale after teleport — force a fresh look (same as cold_look).
+        @current_room_id = nil
+        @dark = false
+        @look_is_fresh = true
+        text = call(:look)
+        look = RoomParser.parse_look(text)
+        observe_visibility!(text, look)
+        @bakery_landed = true if look&.complete?
+        look
+      rescue StandardError => e
+        hook_warn("relocate failed: #{e.class}: #{e.message}")
+        nil
+      end
+
+      def hungry?
+        cond = @store.player && @store.player[:conditions].to_s
+        cond&.include?("hungry")
+      end
+      private :hungry?
+
+      def bakery_goal?(context)
+        text = latest_user_text(context)
+        return false if text.empty?
+        return true if text.match?(/\bbaker(?:y|ies)?\b/i)
+
+        text.match?(/\bmenu\b/i) && text.match?(/\b(?:bread|pastr\w*|shop|bake)\b/i)
+      end
+      private :bakery_goal?
+
+      def bakery_routable?
+        return true if here_is_bakery?
+        return false unless @current_room_id
+
+        route = RouteFinder.new(@store).route(
+          from: @current_room_id, to: @bakery_destination
+        )
+        route.ok
+      end
+      private :bakery_routable?
+
+      def here_is_bakery?
+        return false unless @current_room_id
+
+        name = @store.room(@current_room_id)&.dig(:name).to_s
+        name.match?(/\bbaker/i)
+      end
+      private :here_is_bakery?
+
+      def latest_user_text(context)
+        return "" unless context.respond_to?(:messages)
+
+        context.messages.reverse_each.filter_map do |m|
+          next unless m.role == :user || m.role == "user"
+
+          content = m.content
+          content.is_a?(String) ? content : content.to_s
+        end.first.to_s
+      end
+      private :latest_user_text
 
       def illuminate_call(tool, **args)
         @illuminate_call_tool.call("#{@prefix}#{tool}", args)
       end
       private :illuminate_call
+
+      def relocate_call(tool, **args)
+        @relocate_call_tool.call("#{@prefix}#{tool}", args)
+      end
+      private :relocate_call
+
+      def hook_warn(message)
+        @warn_to&.puts "[mud_hooks] #{message}"
+      rescue IOError, Errno::EPIPE
+        nil
+      end
+      private :hook_warn
 
       # ---------- navigate ---------------------------------------------------
 
@@ -449,7 +568,7 @@ module Boukensha
           line << " · #{result[:steps].join(', ')}" if result[:steps]&.any?
           line
         elsif result[:reason].to_s == "too_dark"
-          "retrace ✗ too_dark — still cannot see; cast create food, cast light on waybread, then retry"
+          "retrace ✗ too_dark — still cannot see; holylight (immortal) or wait for day, then retry"
         else
           at = result[:stopped_at] && "(##{result[:stopped_at]})"
           line = +"retrace ✗ #{result[:reason]}"
@@ -1250,7 +1369,7 @@ module Boukensha
       def guard
         yield
       rescue StandardError => e
-        @warn_to&.puts "[mud_hooks] #{e.class}: #{e.message}"
+        hook_warn("#{e.class}: #{e.message}")
         nil
       end
     end

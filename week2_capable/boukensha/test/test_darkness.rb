@@ -148,23 +148,19 @@ class TestDarkness < Minitest::Test
     assert_includes Boukensha::Mud::Hooks.render_retrace(result), "too_dark"
   end
 
-  def test_ensure_lit_creates_food_casts_light_and_clears_dark
+  def test_ensure_lit_uses_holylight_and_clears_dark
     dirt = room("Dirt Road", exits: %w[south])
     @store.update_player!(current_room_id: dirt, hp: 500, mana: 100, move: 82)
 
     looks = [PITCH_BLACK, look_text("Dirt Road", %w[south])]
-    casts = []
-    equips = []
+    raws = []
     mud = lambda do |name, args = {}, _meta = {}|
       tool = name.sub(/\A.*__/, "")
       case tool
       when "look" then looks.shift || look_text("Dirt Road", %w[south])
-      when "cast_spell"
-        casts << [args[:spell] || args["spell"], args[:target] || args["target"]]
-        "Okay.\r\n\r\n500H 100M 82V > "
-      when "equip_item"
-        equips << [args[:action] || args["action"], args[:item] || args["item"]]
-        "You hold a glowing waybread.\r\n\r\n500H 100M 82V > "
+      when "send_raw"
+        raws << (args[:command] || args["command"])
+        "HolyLight mode on.\r\n\r\n500H 100M 82V > "
       else
         raise "unexpected #{name} #{args}"
       end
@@ -175,11 +171,34 @@ class TestDarkness < Minitest::Test
     ctx = Boukensha::Context.new(system: "")
     hooks.before_model(context: ctx)
 
-    refute hooks.dark?, "illuminate should clear pitch black"
+    refute hooks.dark?, "holylight should clear pitch black"
     assert_equal dirt, hooks.current_room_id
-    assert_equal [["create food", nil], ["light", "waybread"]], casts
-    assert_equal [["hold", "waybread"]], equips
+    assert_equal ["holylight"], raws
     assert_includes ctx.state_block, "Dirt Road"
     refute_includes ctx.state_block, "DARK"
+  end
+
+  def test_ensure_fed_eats_waybread_when_hungry
+    dirt = room("Dirt Road", exits: %w[south])
+    @store.update_player!(current_room_id: dirt, hp: 500, mana: 100, move: 82,
+                          conditions: "hungry")
+
+    eats = []
+    mud = lambda do |name, args = {}, _meta = {}|
+      tool = name.sub(/\A.*__/, "")
+      case tool
+      when "look" then look_text("Dirt Road", %w[south])
+      when "consume_item"
+        eats << [args[:mode] || args["mode"], args[:item] || args["item"]]
+        "You eat the waybread.\r\n\r\n500H 100M 82V > "
+      else
+        raise "unexpected #{name} #{args}"
+      end
+    end
+
+    hooks = Boukensha::Mud::Hooks.new(store: @store, call_tool: mud,
+                                      illuminate_call_tool: mud, warn_to: nil)
+    hooks.before_model(context: Boukensha::Context.new(system: ""))
+    assert_equal [["eat", "waybread"]], eats
   end
 end

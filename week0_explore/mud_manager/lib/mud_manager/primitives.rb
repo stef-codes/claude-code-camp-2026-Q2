@@ -159,11 +159,31 @@ module MudManager
 
     def get(obj, container: nil, count: nil)
       require_str!(obj, :obj)
-      parts = ["get"]
-      parts << count.to_s if count
-      parts << obj
-      parts << container if container
-      cmd(:get, "get", parts.join(" "), obj: obj, container: container, count: count)
+      obj = obj.to_s.strip
+      container = container.to_s.strip
+      container = nil if container.empty?
+
+      # CircleMUD parses "get 1 sword" as object "1", container "sword"
+      # → "A sword is not a container." Never emit a bare leading integer.
+      # Nth-match disambiguation uses dotted form: get 2.sword
+      # Loot uses: get all corpse (count must not apply).
+      n = begin
+            count.nil? ? nil : Integer(count)
+          rescue ArgumentError, TypeError
+            nil
+          end
+
+      raw =
+        if obj.casecmp("all").zero?
+          container ? "get all #{container}" : "get all"
+        elsif n && n > 1
+          keyword = obj.split(/\s+/).first
+          container ? "get #{n}.#{keyword} #{container}" : "get #{n}.#{keyword}"
+        else
+          container ? "get #{obj} #{container}" : "get #{obj}"
+        end
+
+      cmd(:get, "get", raw, obj: obj, container: container, count: count)
     end
 
     def drop(mode, obj, count: nil)
