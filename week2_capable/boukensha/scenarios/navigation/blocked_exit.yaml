@@ -1,0 +1,56 @@
+version: 1
+id: blocked_exit_stops_safely
+description: >
+  A closed door on the second step. The walk must stop where it actually is,
+  record the failure against that edge, and not keep issuing moves against a
+  route the world has already refused.
+
+initial_state:
+  start: Town Square
+  rooms:
+    - name: Town Square
+      description: A wide cobbled square, worn smooth by traffic.
+      exits: [north, east]
+    - name: Main Street
+      description: A broad street running east towards the smell of bread.
+      exits: [south, east]
+    - name: The Cozy Bakery
+      description: Ovens line the back wall and the air is warm with flour.
+      exits: [west]
+  edges:
+    - [Town Square, north, Main Street]
+    - [Main Street, east, The Cozy Bakery]
+    - [The Cozy Bakery, west, Main Street]
+    - [Main Street, south, Town Square]
+
+driver:
+  type: transcript
+  fixture: ../../test/fixtures/evaluation/blocked_exit.json
+
+action:
+  type: navigate
+  destination: The Cozy Bakery
+
+limits:
+  max_commands: 10
+
+assertions:
+  navigation_ok: false
+  reason: blocked
+  # Where it ACTUALLY is, which is the number that matters: a failed navigation
+  # still moved the character, and a result that omitted that would leave the
+  # next decision working from a position the agent does not occupy.
+  final_room: Main Street
+  steps_eq: 1
+  # It stops. It does not try the rest of the route.
+  tool_calls_lte: 2
+  # The refusal has to survive the turn as a fact about the map, not just as a
+  # sentence in a log — this reads the journal line `record_exit_failure!` wrote.
+  blocked_exit_recorded:
+    room: Main Street
+    direction: east
+  deaths: 0
+
+scoring:
+  required: [navigation_ok, reason, final_room]
+  recovery: [blocked_exit_recorded]

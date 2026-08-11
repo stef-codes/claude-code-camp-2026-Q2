@@ -1,0 +1,19 @@
+# A player profile for the week2 agent.
+#
+# Two jobs. It names the MUD character to log in as, and its DIRECTORY becomes
+# the agent's `profile_dir` — so knowledge.sqlite3, sessions/ and journal/ are
+# written here rather than in .boukensha/, and two characters can be run without
+# one overwriting the other's memory.
+#
+# The monitor discovers profiles by looking for exactly this file
+# (ProfileRegistry#profile_entries), so creating it is also what makes "Dummy"
+# selectable in the UI alongside "Legacy".
+#
+# No `password_env:` here on purpose. Setting it makes the password MANDATORY —
+# Config#apply_profile_mud_env! raises if the named variable is unset — whereas
+# leaving it out lets the daemon fall back to the `mud:` block in
+# ../../settings.yaml, which already holds this character's credentials
+# (mcp/config.rb:21-22: ENV["MUD_NAME"] || y["username"]).
+player:
+  name: dummy
+  display_name: Dummy

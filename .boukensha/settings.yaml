@@ -1,14 +1,200 @@
+
 tasks:
   player:
     provider: anthropic        # provider name (string)
     model: claude-haiku-4-5
     prompt_override:
       system: true
+    # WITHOUT THIS BLOCK THE AGENT HAS NO TOOLS AT ALL.
+    #
+    # Boukensha.task_permissions (boukensha.rb:446-450) is default-deny exactly
+    # like the composites' block further down: a task with no `allow:` gets
+    # Permissions.deny_all, every MCP tool is refused registration, and the
+    # header prints `servers: mud (0)`. The model is then handed a MUD it cannot
+    # touch, and — having no tools — answers by explaining that it is unable to
+    # connect to external game servers. Which reads like a model problem and is
+    # a config one.
+    #
+    # Names may be bare here; a bare name matches whatever MCP prefix the tool
+    # ends up with, so `move` covers `tbamud__move`. Every rule is validated at
+    # startup against the tool's own schema, so a typo aborts the REPL instead
+    # of quietly narrowing the agent.
+    #
+    # `look` is deliberately ABSENT. It belongs to the room survey, which runs
+    # under its own allowlist below and only for a room the agent has never
+    # stood in; leaving it here would let the model re-derive rooms it has
+    # already been told about, which is the exact cost the memory layer exists
+    # to remove (see the long note in boukensha_loader.rb).
+    #
+    # Travel `move` is also ABSENT on the player. The parent is the goal layer:
+    # known destinations go through `navigate`, discovery through `explore`,
+    # ambiguous position through `relocalize`. Subagents own raw movement.
+    #
+    # `send_raw` is also absent, and that one is a judgement call you may want
+    # to reverse. It is an escape hatch that sends an arbitrary command string,
+    # so it can reach `look`, and it steps around `move`'s direction enum and
+    # therefore around the turn policy. Grant it and the value-level half of
+    # this allowlist stops meaning much. Add `- send_raw` if you would rather
+    # have the escape hatch than the guarantee.
+    allow:
+      - navigate                 # native: walk a route the agent already knows
+      - explore                  # native: delegate frontier discovery to Explorer
+      - relocalize               # native: delegate ambiguous-position recovery
+      - retrace                  # native: walk back along arrival breadcrumbs
+      - examine
+      - consider
+      - "check(kind: score|inventory|equipment|gold|exits|time|weather|levels|wimpy|toggle|where)"
+      - poll
+      - mud_status
+      - "set_position(position: stand|sit|rest|sleep|wake)"
+      - track
+      - "attack(style: hit|murder|kill)"
+      - "skill_strike(skill: backstab|bash|kick|rescue|assist)"
+      - flee
+      - "say(mode: say|emote|reply)"
+      - "tell(mode: tell|whisper|ask)"
+      - "channel_say(channel: shout|gossip|auction|grats|holler)"
+      - get_item
+      - "drop_item(mode: drop|donate|junk)"
+      - put_item
+      - "equip_item(action: wear|wield|grab|hold|remove)"
+      - "consume_item(mode: eat|taste|drink|sip)"
+      - cast_spell
+      - "use_magic_item(mode: use|quaff|recite)"
+      - "shop(action: buy|sell|list|value|offer)"
+      - practice
+      - save_character
+  explorer:
+    provider: anthropic
+    model: claude-haiku-4-5
+    max_iterations: 12
+    max_output_tokens: 512
+    prompt_override:
+      system: true
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
+      - "check(kind: exits)"
+      - poll
+      - mud_status
+  relocalizer:
+    provider: anthropic
+    model: claude-haiku-4-5
+    max_iterations: 6
+    max_output_tokens: 384
+    prompt_override:
+      system: true
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
+      - "check(kind: exits)"
+      - poll
 mud:
   host: localhost
   port: 4000
   username: dummy
   password: helloworld
+  # Midgaard bakery landmark (zone 30 #3009). Used as the navigate destination
+  # name. `auto: true` would immortal-goto when stranded; left off — walk only.
+  landmarks:
+    bakery:
+      name: The Bakery
+      room: 3009
+      auto: false
+
+# Tracing. Secrets and the OTLP endpoint live in .boukensha/.env (gitignored).
+# Contract is pinned to OpenTelemetry GenAI semantic conventions 1.37.0 --
+# see week2_capable/observability/README.md before changing attributes.
+observability:
+  otel:
+    enabled: true
+    # ON: full prompts, model responses and MUD transcripts ship to Langfuse
+    # Cloud, redacted (api keys, Bearer tokens, sk-*) and capped at
+    # content_max_bytes per span. Set false and only metadata leaves the machine
+    # -- model, provider, token counts, latency, span and tool names.
+    #
+    # This used to be off with a note that turning it on would NOT populate
+    # Langfuse's input/output panes, because content was written to span
+    # *events* and Langfuse reads span *attributes*. That is fixed: the exporter
+    # now writes `langfuse.observation.input` / `.output`, so the panes work.
+    capture_content: true
+    content_max_bytes: 4096
+  # Fetch system prompts from Langfuse instead of the files under prompts/, so a
+  # prompt can be edited, versioned and rolled back without a redeploy, and so a
+  # trace can say WHICH version produced it.
+  #
+  # OFF for now: Langfuse `boukensha-player-system` @ production was a short
+  # stale copy that omitted the Bakery visit recipe / travel rules. Until that
+  # prompt is re-pushed from `.boukensha/prompts/player/system.md`, load the
+  # local file. Re-enable after syncing (or set BOUKENSHA_LANGFUSE_PROMPTS=1).
+  #
+  # Prompts are looked up as `boukensha-<task>-system` at label `production`.
+  prompts:
+    enabled: false
+
+# Allowlists for the framework's OWN automatic tool users -- the composites that
+# run outside the model's turn. Each key is a `Boukensha.tool_dispatcher(<key>)`
+# call site, and the lookup is `dig(:tools, <key>, :allow)`.
+#
+# THIS BLOCK IS LOAD-BEARING. A missing key is not "unrestricted", it is
+# `Permissions.deny_all` (boukensha.rb:406-407) -- the dispatcher then registers
+# no tools, every call raises UnknownToolError, and Hooks#guard swallows it. The
+# composite becomes a silent no-op. Deleting a key here disables a feature
+# without any error reaching the log.
+tools:
+  # Everything Mud::Hooks does on the model's behalf shares this one dispatcher,
+  # so the list is the union of ALL its call sites, not just the survey's:
+  #
+  #   poll                 before_tools     (hooks.rb:166)
+  #   look                 cold_look        (hooks.rb:303)
+  #   check(kind: score)   before_turn      (hooks.rb:143)
+  #   check(kind: exits)   survey           (hooks.rb:362)
+  #   consider, examine    survey's appraisal pair
+  #
+  # Omitting one does not raise anywhere the operator will see it — the call
+  # dies as UnknownToolError inside Hooks#guard, and the feature just quietly
+  # stops happening. `poll` and `check(kind: score)` were both missing from the
+  # first draft of this block, which cost the agent its thinking-gap events and
+  # its score refresh with no error at all.
+  #
+  # `look` is deliberately absent from the *player's* own allowlist, so this is
+  # the only route to a room survey.
+  room_survey:
+    allow:
+      - poll
+      - look
+      - "check(kind: exits|score)"
+      - consider
+      - examine
+  # Navigation walks a route the agent already knows. Its slice is deliberately
+  # narrower than the survey's -- `move` only. No `look` (the arrival text from a
+  # move is all it needs), and no `flee` (a route is a decision, not a panic).
+  # Directions are pinned to the six the daemon's `move` enum declares, which is
+  # also exactly what RouteFinder will route over.
+  navigate:
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
+  # Scripted nearest-frontier explore composite (optional path alongside the
+  # LLM Explorer subagent). Same move-only surface as navigate.
+  explore:
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
+  # Walk back along in-session breadcrumbs. Move only — never invents a reverse
+  # edge; a refused opposite stops the retrace where you stand.
+  retrace:
+    allow:
+      - "move(direction: north|east|south|west|up|down)"
+  # Outdoor night / pitch black. Dummy (implementor) uses holylight via send_raw.
+  # create food → light waybread does NOT work on tbaMUD (food isn't a light
+  # target). consume_item + cast create food cover hunger (nourish).
+  illuminate:
+    allow:
+      - send_raw
+      - cast_spell
+      - "consume_item(mode: eat)"
+  # Immortal Relocate (Hooks only): goto a landmark when a bakery goal has no
+  # routable path. Not a player tool — send_raw stays off the player allowlist.
+  relocate:
+    allow:
+      - send_raw
 
 # Tools for the agent come from MCP servers listed here (boukensha ships none
 # of its own). The `mud` server is the Ruby mud-manager daemon spawned over

@@ -1,0 +1,45 @@
+version: 1
+id: retrace_returns
+description: >
+  Walk out to a neighbour, then retrace. Final room is the origin. The return
+  edge is written only because the MUD confirmed the opposite move — never
+  fabricated up front.
+
+initial_state:
+  start: Origin
+  rooms:
+    - name: Origin
+      description: Where the walk began.
+      exits: [north]
+    - name: Neighbour
+      description: One step north; south should lead back.
+      exits: [south]
+  edges:
+    - [Origin, north, Neighbour]
+    # Deliberately no Neighbour→Origin edge. Retrace tries south as an action.
+
+driver:
+  type: transcript
+  fixture: ../../test/fixtures/evaluation/retrace_returns.json
+
+action:
+  type: retrace
+  destination: Neighbour
+
+limits:
+  max_commands: 5
+
+assertions:
+  navigation_ok: true
+  reason: retraced
+  final_room: Origin
+  moves_eq: [north, south]
+  edge_retargeted:
+    room: Neighbour
+    direction: south
+    to: Origin
+  deaths: 0
+
+scoring:
+  required: [navigation_ok, final_room, moves_eq]
+  recovery: [edge_retargeted]

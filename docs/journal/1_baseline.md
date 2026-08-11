@@ -10,25 +10,21 @@ run: I built my own syllabus/study plan to structure the learning
 
 - Understand every layer of the baseline agent by rebuilding it, not reading it.
 - Get the agent to actually connect to and play the MUD.
-- Decision I made early: **port the reference Ruby implementation to Python,
-  step by step.** Re-implementing something 1:1 forces you to understand every
-  line — you can't hand-wave past the parts you don't get.
+- Decision I made early: **port the Ruby code to Python,
+  step by step.** I figured it would help me understand better in Python. 
 
 ## What I built
 
-- **Ported all 13 steps (00 → 12) from Ruby to Python.** Each step is its own
+- **Ported all 13 steps (00 → 12) from Ruby to Python. (With Claude)** Each step is its own
   `uv` project under `week1_baseline/python/NN_stepname/`. The full stack:
   config, the core structs, the tool registry, the prompt builder (5 provider
   backends), the API client, the agent loop, the logger, the run-DSL, the
   REPL, the global executable, the MCP tool library, a terminal UI, and
-  context management.
+  context management. All steps 00_config to 12_context. 
 - **Made `boukensha` a real global command** — `uv tool install --editable`
   of the final step, so I can type `boukensha` from anywhere and it runs my
   live source.
-- **Wired the agent to the MUD** and confirmed it actually plays: it logged in
-  and described its starting room ("The Cozy Bakery," exit east to "A Road
-  Through The Plains"). Seeing the agent decide *on its own* to call a `look`
-  tool and report the room was the payoff moment.
+- **Wired the agent to the MUD** and confirmed it actually plays. I made it to the bakery! I tried to get it to help level up my kicks but it seems to exit the loop too soon. 
 
 ## How it actually works (the things that clicked)
 
@@ -41,15 +37,9 @@ run: I built my own syllabus/study plan to structure the learning
   every capability the agent has comes from an MCP server declared in config.
   The big realization was that **MCP is a wire protocol (JSON-RPC over stdio),
   not a library.** That's *why* my Python agent can drive the Ruby MUD daemon
-  with no binding between them — it just spawns it as a subprocess and trades
-  JSON lines.
-- **Context management is real engineering, not magic.** Step 12 tracks token
-  usage against the model's real context window, auto-compacts old messages
-  when it gets full, has two independent circuit breakers (iteration count and
-  token spend), and normalizes each provider's "thinking" output into one
-  reasoning format.
+  with no binding between them. I learned a new implementation of JSON-RPC here by pulling down the main code. 
 
-## Problems I hit and how I solved them
+## Problems I hit and how I solved them (Letting Claude write out my problems.)
 
 - **`tasks.player.model is required` on launch.** The command couldn't find my
   config. It looks in `~/.boukensha` by default, but my config lives at the
@@ -79,25 +69,21 @@ run: I built my own syllabus/study plan to structure the learning
 ## What I learned
 
 - **Tools define capability.** The model is just a text engine; what it can
-  *do* is entirely the tools you give it. No tools = it can only converse (and
-  will bluff about why).
+  *do* is entirely the tools you give it. No tools = "No shoes, no shirt, no service"
 - **MCP is language-agnostic plumbing.** Because it's stdio + JSON-RPC, the
-  agent and its tool servers can be written in completely different languages.
+  agent and its tool servers can be written in completely different languages. I thought I had to build the MCP server in python. But, I can just use the existing on in Ruby, protocols don't care what language the server is written in. 
 - **Docker and MCP are unrelated layers.** Docker runs the MUD game server;
   MCP is how my agent talks to the daemon that telnets into it. Neither depends
-  on the other.
+  on the other. I thought I needed Docker to run the MCP server...unrelated.
 - **Config/environment resolution causes more "it's broken" moments than the
   actual code.** Half my debugging was pathing and PATH, not logic.
 - **Porting 1:1 is the best way to actually understand a framework.** I know
-  this codebase far better than I would have from just running it.
+  this codebase far better than I would've from just running it. And there's still a long way to go.
 
 ## What's still rough / what's next
 
 - **Optional Phase 2:** port the Ruby MUD daemon to Python too, for a
   single-language stack and to learn the MCP *server* side (I've only built the
-  client side so far). Not required — the Ruby daemon works fine.
-- **MUD credentials** are still the placeholder `dummy` character sitting in
-  `settings.yaml`; I should swap in a real character and get the secrets out of
-  the tracked config.
-- Push the agent past "look" — actually navigate, fight, and complete a task in
-  the MUD, and see where its lack of memory/planning shows.
+  client side so far). Not required — the Ruby works fine.
+- Learn how to level up my character. 
+

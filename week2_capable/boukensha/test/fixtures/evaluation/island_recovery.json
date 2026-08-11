@@ -1,0 +1,8 @@
+{
+  "_comment": "Island: Dirt Road has a named frontier exit and no walked path to the same-named visited room.",
+  "responses": {
+    "look": [{ "room": "Dirt Road" }],
+    "poll": "",
+    "move:south": [{ "room": "Edge of a Clearing" }]
+  }
+}

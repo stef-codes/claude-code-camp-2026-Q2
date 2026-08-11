@@ -100,7 +100,56 @@ class Config:
         v = self.dig("agent", "compaction_threshold")
         return 0.85 if v is None else float(v)
 
+    # ---------- observability ---------------------------------------------
+    # Tracing is OFF by default. The endpoint and credentials are not read
+    # here: they come from standard OTEL_EXPORTER_OTLP_* environment variables
+    # (loaded from .boukensha/.env by _load_env), so switching backends never
+    # touches settings.yaml.
+
+    def otel_enabled(self) -> bool:
+        return self._env_boolean(
+            "BOUKENSHA_OTEL_ENABLED", self.dig("observability", "otel", "enabled"), False
+        )
+
+    # OFF by default on purpose: with this false only metadata leaves the
+    # process (model, provider, token counts, latency, span names). Turning it
+    # on ships prompts and tool payloads to whatever OTLP endpoint is
+    # configured.
+    def otel_capture_content(self) -> bool:
+        return self._env_boolean(
+            "BOUKENSHA_OTEL_CAPTURE_CONTENT",
+            self.dig("observability", "otel", "capture_content"),
+            False,
+        )
+
+    def otel_content_max_bytes(self) -> int:
+        raw = os.environ.get("BOUKENSHA_OTEL_CONTENT_MAX_BYTES")
+        if raw is None:
+            raw = self.dig("observability", "otel", "content_max_bytes") or 4096
+        value = int(raw)
+        if value <= 0:
+            raise ValueError("BOUKENSHA_OTEL_CONTENT_MAX_BYTES must be positive")
+        return value
+
     # ---------- low-level helpers -----------------------------------------
+
+    # Env var wins over the YAML value; an unset/None pair falls back to
+    # `default`. An unparseable value raises rather than being silently
+    # treated as false — a typo'd BOUKENSHA_OTEL_ENABLED=ture should not
+    # quietly disable tracing.
+    @staticmethod
+    def _env_boolean(name: str, yaml_value, default: bool) -> bool:
+        raw = os.environ[name] if name in os.environ else yaml_value
+        if raw is None:
+            return default
+        if raw is True or raw is False:
+            return raw
+        text = str(raw).lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off"):
+            return False
+        raise ValueError(f"{name} must be true or false")
 
     # Fetch a nested key path from settings, e.g. dig("tasks", "player")
     def dig(self, *keys: str):

@@ -196,6 +196,49 @@ config lives at the **repo-root** `.boukensha/` (there is no `~/.boukensha`),
 so either set `~/.boukensharc` once (`boukensha_dir: /abs/path/to/repo/.boukensha`)
 or prefix each run with `BOUKENSHA_DIR="$(pwd)/.boukensha"` from the repo root.
 
+### OpenTelemetry tracing (back-ported from week 2)
+
+**Not part of the original step 12.** Ported forward from
+`week2_capable/boukensha/lib/boukensha/telemetry/*` so the globally installed
+`boukensha` can emit traces; upstream Ruby only grows this in week 2.
+
+```
+boukensha/telemetry/
+  __init__.py         # build(config:) -> live exporter or Noop
+  noop.py             # the null object every untraced session gets
+  open_telemetry.py   # OTLP/HTTP exporter, GenAI semconv 1.37.0
+```
+
+Off by default. Enable in `settings.yaml`, endpoint via standard env vars:
+
+```yaml
+observability:
+  otel:
+    enabled: true
+    capture_content: false   # metadata only; see the warning below
+    content_max_bytes: 4096
+```
+
+`Logger.operation(name, kind:, attributes:, root:)` is a context manager
+yielding a `Frame` whose `.set()` accumulates span attributes. The agent opens
+three span types, matching Ruby's names and attributes:
+
+| span | kind | key attributes |
+|---|---|---|
+| `invoke_agent <task>` | internal, trace root | `gen_ai.operation.name`, `gen_ai.agent.name` |
+| `chat <model>` | client | `gen_ai.request.model`, `gen_ai.provider.name`, `gen_ai.usage.*` |
+| `execute_tool <tool>` | client | `gen_ai.tool.name`, `boukensha.tool.full_name` |
+
+Verified live against Langfuse Cloud: the trace tree types correctly
+(AGENT / GENERATION / TOOL), and cost is derived from model + token counts
+without emitting `gen_ai.usage.cost`.
+
+> **`capture_content: true` sends prompts and tool payloads off-box.** It also
+> will not fill Langfuse's input/output panes: content is written to span
+> *events*, and Langfuse reads input/output from span *attributes*
+> (`langfuse.observation.input` / `gen_ai.prompt`). Bridging that needs vendor
+> attributes and is a deliberate break from the pinned semconv contract.
+
 ## Tests
 
 ```bash
@@ -203,9 +246,41 @@ uv run pytest
 ```
 
 10 pass, 12 skip — the skips need the `mud-manager` binary from
-`week0_explore/mud_manager`, which this checkout doesn't ship.
+`week0_explore/mud_manager`, which this checkout doesn't ship. **Stale on this
+machine:** that binary is now present, so those tests execute instead of
+skipping, and three fail because they assert the daemon's *fake* MUD replies
+while a real MUD is reachable. Pre-existing and unrelated to telemetry —
+verified by stashing.
 
 ## Differences from Ruby
+
+- **Telemetry is a reduced port.** Ruby's `Logger#operation` also writes
+  `operation_start`/`operation_end` JSONL records and mints correlation ids for
+  the week-2 change-data-capture journal. Those belong to the `Operation`
+  subsystem, which this step does not have, so `operation()` emits **spans
+  only** — with tracing off, a session's JSONL is byte-identical to one written
+  before the port. When tracing is on, the sole shape change is `trace_id` /
+  `span_id` stamped on each line.
+- **`Logger.current_task` is a single name, not a stack.** Ruby pushes/pops for
+  delegated sub-runs; step 12 has no delegation.
+- **`error!` → `error`** on both span classes: `!` is not a legal Python
+  identifier.
+- **`error.type` is the bare class name** (`ApiError`), where Ruby records the
+  fully-qualified `Boukensha::ApiError`.
+- **`force_flush`/`shutdown` keep Ruby's seconds-based timeout** and convert to
+  the Python SDK's milliseconds internally. `TracerProvider.shutdown()` accepts
+  no timeout in Python, so that argument is accepted and ignored.
+- **The exporter is wired explicitly.** Ruby's `SDK.configure` installs a batch
+  processor and OTLP exporter implicitly once the gem is required; Python has to
+  construct `BatchSpanProcessor(OTLPSpanExporter())` by hand. The
+  `proto-http` exporter is used, not `proto-grpc` — Langfuse does not accept
+  OTLP/gRPC.
+- **Redaction quirk preserved:** the `Bearer ` prefix test is case-*sensitive*
+  while the pattern matching it is not, so `bearer abc` is replaced wholesale
+  while `Bearer abc` keeps its scheme. That asymmetry is Ruby's.
+- **Usage extraction reads only `"usage"`**, so `gen_ai.usage.*` is accurate for
+  Anthropic/OpenAI and absent for Gemini — the same upstream limitation already
+  documented below for token tracking.
 
 - **`Agent._extract_text()` now joins with `"\n"`**, matching Ruby's
   `.join("\n")` exactly. An earlier Python step (before this one) had it

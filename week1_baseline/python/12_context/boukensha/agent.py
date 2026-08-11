@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .errors import ApiError
 from .logger import Logger
 
@@ -30,12 +32,16 @@ class Agent:
         max_iterations: int | None = MAX_ITERATIONS,
         max_turn_tokens: int | None = None,
         max_output_tokens: int | None = None,
+        root_trace: bool = True,
     ) -> None:
         self.context = context
         self.registry = registry
         self.builder = builder
         self.client = client
         self.logger = logger if logger is not None else Logger()
+        # Each turn is its own trace rather than one unbounded trace per REPL
+        # session. Matches Ruby's `root_trace: true` default.
+        self.root_trace = root_trace
         self.max_iterations = int(self.MAX_ITERATIONS if max_iterations is None else max_iterations)
         self.max_turn_tokens = int(max_turn_tokens or 0)  # 0 = disabled
         self.max_output_tokens = max_output_tokens
@@ -43,55 +49,111 @@ class Agent:
 
     def run(self) -> str:
         self.context.reset_turn_tokens()
-        self._compact_if_needed()
 
-        while True:
-            # Two independent ceilings; stop at whichever trips first. Limits
-            # are *trigger thresholds*, not hard caps: when one is reached we
-            # stop starting new work iterations and make exactly one terminal
-            # wind-down call (counted in tokens, but not as another
-            # iteration).
-            if self._iteration_limit_reached():
-                self.logger.limit_reached(
-                    kind="max_iterations", n=self.iteration, max=self.max_iterations
-                )
-                return self._wrap_up("max_iterations")
-            if self._token_limit_reached():
-                self.logger.limit_reached(
-                    kind="max_tokens", n=self.context.turn_tokens, max=self.max_turn_tokens
-                )
-                return self._wrap_up("max_tokens")
+        # The `invoke_agent` span is the trace's root: every iteration, the
+        # compaction check and wrap_up nest under it automatically, because the
+        # telemetry layer reads the ambient context rather than being handed a
+        # parent explicitly.
+        agent_name = self.logger.current_task
+        with self.logger.operation(
+            f"invoke_agent {agent_name}",
+            root=self.root_trace,
+            attributes={
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.agent.name": agent_name,
+                "boukensha.max_iterations": self.max_iterations,
+                "boukensha.max_turn_tokens": self.max_turn_tokens,
+            },
+        ):
+            self._compact_if_needed()
 
-            self.iteration += 1
-            self.logger.iteration(n=self.iteration, max=self.max_iterations)
-            self.logger.prompt(
-                messages=self.context.messages,
-                tools=self.context.tools,
-                context_window=self.context.context_window,
+            while True:
+                # Two independent ceilings; stop at whichever trips first.
+                # Limits are *trigger thresholds*, not hard caps: when one is
+                # reached we stop starting new work iterations and make exactly
+                # one terminal wind-down call (counted in tokens, but not as
+                # another iteration).
+                if self._iteration_limit_reached():
+                    self.logger.limit_reached(
+                        kind="max_iterations", n=self.iteration, max=self.max_iterations
+                    )
+                    return self._wrap_up("max_iterations")
+                if self._token_limit_reached():
+                    self.logger.limit_reached(
+                        kind="max_tokens", n=self.context.turn_tokens, max=self.max_turn_tokens
+                    )
+                    return self._wrap_up("max_tokens")
+
+                self.iteration += 1
+                self.logger.iteration(n=self.iteration, max=self.max_iterations)
+                self.logger.prompt(
+                    messages=self.context.messages,
+                    tools=self.context.tools,
+                    context_window=self.context.context_window,
+                )
+
+                response = self._call_model(**self._call_opts())
+                self.logger.raw(data=response)
+                parsed = self.builder.parse_response(response)
+                self._record_usage(response)
+                self._log_reasoning(parsed["content"])
+
+                if parsed["stop_reason"] == "tool_use":
+                    self._handle_tool_calls(parsed["content"], response)
+                else:
+                    text = self._extract_text(parsed["content"])
+                    self.logger.response(
+                        text=text,
+                        usage=response.get("usage"),
+                        stop_reason=parsed["stop_reason"],
+                        task=None,
+                        backend=self.builder.backend,
+                    )
+                    self.logger.turn_end(
+                        reason="completed",
+                        iterations=self.iteration,
+                        tokens=self.context.turn_tokens,
+                    )
+                    self.context.add_message("assistant", text)
+                    return text
+
+    # The model round-trip, in its own CLIENT span. The span brackets ONLY
+    # `client.call`, so it measures inference rather than also charging the
+    # model for our own JSON serialization on either side of the network call.
+    def _call_model(self, **opts) -> dict:
+        backend = self.builder.backend
+        provider = self.logger._provider_name(backend)
+        with self.logger.operation(
+            f"chat {getattr(backend, 'model', None)}",
+            kind="client",
+            attributes={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.provider.name": provider,
+                "gen_ai.request.model": getattr(backend, "model", None),
+                "boukensha.backend": provider,
+            },
+        ) as frame:
+            frame.set(
+                provider=provider,
+                model=getattr(backend, "model", None),
+                iteration=self.iteration,
+                context_tokens=self.context.current_tokens,
             )
-
-            response = self.client.call(**self._call_opts())
-            self.logger.raw(data=response)
-            parsed = self.builder.parse_response(response)
-            self._record_usage(response)
-            self._log_reasoning(parsed["content"])
-
-            if parsed["stop_reason"] == "tool_use":
-                self._handle_tool_calls(parsed["content"], response)
-            else:
-                text = self._extract_text(parsed["content"])
-                self.logger.response(
-                    text=text,
-                    usage=response.get("usage"),
-                    stop_reason=parsed["stop_reason"],
-                    task=None,
-                    backend=self.builder.backend,
-                )
-                self.logger.turn_end(
-                    reason="completed", iterations=self.iteration, tokens=self.context.turn_tokens
-                )
-                self.context.add_message("assistant", text)
-                return text
+            response = self.client.call(**opts)
+            usage = response.get("usage") or {}
+            # Reads only the "usage" key, so token counts are accurate for the
+            # Anthropic/OpenAI backends; Gemini reports usage under a different
+            # key entirely. This matches Ruby, bug included.
+            frame.set(
+                {
+                    "gen_ai.usage.input_tokens": usage.get("input_tokens"),
+                    "gen_ai.usage.output_tokens": usage.get("output_tokens"),
+                }
+            )
+            stop = response.get("stop_reason")
+            if stop is not None:
+                frame.set({"gen_ai.response.finish_reasons": [str(stop)]})
+            return response
 
     def _iteration_limit_reached(self) -> bool:
         return self.max_iterations > 0 and self.iteration >= self.max_iterations
@@ -129,24 +191,29 @@ class Agent:
     # reported turn total. Falls back to a deterministic message if the call
     # fails.
     def _wrap_up(self, reason: str) -> str:
-        self.context.add_message("user", self.WRAP_UP_DIRECTIVE)
         try:
-            response = self.client.call(tools=[], max_output_tokens=self.WRAP_UP_OUTPUT_TOKENS)
-            parsed_wrap = self.builder.parse_response(response)
-            text = self._extract_text(parsed_wrap["content"])
-            if not text.strip():
-                text = self._fallback_message(reason)
-            self._record_usage(response)
-            self.logger.response(
-                text=text,
-                usage=response.get("usage"),
-                stop_reason=parsed_wrap["stop_reason"],
-                task=None,
-                backend=self.builder.backend,
-            )
-            self.logger.turn_end(reason=reason, iterations=self.iteration, tokens=self.context.turn_tokens)
-            self.context.add_message("assistant", text)
-            return text
+            with self.logger.operation("wrap_up"):
+                self.context.add_message("user", self.WRAP_UP_DIRECTIVE)
+                response = self._call_model(
+                    tools=[], max_output_tokens=self.WRAP_UP_OUTPUT_TOKENS
+                )
+                parsed_wrap = self.builder.parse_response(response)
+                text = self._extract_text(parsed_wrap["content"])
+                if not text.strip():
+                    text = self._fallback_message(reason)
+                self._record_usage(response)
+                self.logger.response(
+                    text=text,
+                    usage=response.get("usage"),
+                    stop_reason=parsed_wrap["stop_reason"],
+                    task=None,
+                    backend=self.builder.backend,
+                )
+                self.logger.turn_end(
+                    reason=reason, iterations=self.iteration, tokens=self.context.turn_tokens
+                )
+                self.context.add_message("assistant", text)
+                return text
         except ApiError:
             msg = self._fallback_message(reason)
             self.logger.turn_end(reason=reason, iterations=self.iteration, tokens=self.context.turn_tokens)
@@ -199,12 +266,34 @@ class Agent:
             args = block.get("input")
             use_id = block.get("id")
 
-            self.logger.tool_call(name=name, args=args)
-            try:
-                result = self.registry.dispatch(name, args)
-                self.logger.tool_result(name=name, result=result, ok=True)
-            except Exception as e:
-                result = f"ERROR: {type(e).__name__}: {e}"
-                self.logger.tool_result(name=name, result=result, ok=False, error=str(e))
+            tool_name = self._short_tool_name(name)
+            with self.logger.operation(
+                f"execute_tool {tool_name}",
+                kind="client",
+                attributes={
+                    "gen_ai.operation.name": "execute_tool",
+                    "gen_ai.tool.name": tool_name,
+                    "boukensha.tool.full_name": name,
+                    "boukensha.tool.initiator": "model",
+                    "boukensha.tool.call_id": use_id,
+                },
+            ) as frame:
+                self.logger.tool_call(name=name, args=args)
+                try:
+                    result = self.registry.dispatch(name, args)
+                    self.logger.tool_result(name=name, result=result, ok=True)
+                    frame.set(ok=True)
+                except Exception as e:
+                    result = f"ERROR: {type(e).__name__}: {e}"
+                    self.logger.tool_result(name=name, result=result, ok=False, error=str(e))
+                    # The tool error is recorded on the span, but is NOT
+                    # re-raised: a failed tool is a result the model gets to
+                    # react to, not a failed turn. So the span is marked
+                    # `ok: false` rather than given ERROR status.
+                    frame.set(ok=False, error_type=type(e).__name__)
 
-            self.context.add_message("tool_result", str(result), tool_use_id=use_id)
+                self.context.add_message("tool_result", str(result), tool_use_id=use_id)
+
+    # Strips the MCP server prefix: `tbamud__look` -> `look`.
+    def _short_tool_name(self, name) -> str:
+        return re.sub(r"\A.*__", "", str(name))

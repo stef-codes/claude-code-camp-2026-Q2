@@ -1,0 +1,626 @@
+require "json"
+require "time"
+require_relative "schema"
+require_relative "fingerprint"
+
+module Boukensha
+  module Mud
+    module Memory
+      # The agent's knowledge of the world, on disk.
+      #
+      # boukensha is the ONLY writer. mud_monitor is a read-only reader of
+      # another process's file, exactly as it already is for sessions/, telnet/
+      # and manager/ — which is why WAL is set at open and is not optional: a
+      # monitor page refresh must never be able to hand the agent SQLITE_BUSY
+      # mid-turn.
+      #
+      # The path comes from Config, so the writer and mud_monitor resolve
+      # `boukensha_dir` identically by construction rather than by both
+      # remembering to. Getting that resolution wrong is exactly what made the
+      # monitor's telnet/manager pages report "logging is off".
+      class Store
+        # The naming convention is mud_monitor's, not ours — its initializer
+        # already probes `<boukensha_dir>/knowledge.sqlite3` for the health
+        # endpoint's `knowledge_attached` flag. Creating this file is what flips
+        # that to true with no monitor changes at all.
+        FILENAME = "knowledge.sqlite3".freeze
+
+        class Unavailable < StandardError; end
+
+        # Wraps the SQLite3 handle, counts `execute` by statement kind, and
+        # forwards everything else — get_first_value, execute_batch, transaction,
+        # last_insert_row_id, close — untouched. `Store#db` is public and the
+        # tests reach through it, so transparency is a requirement and not a
+        # nicety.
+        #
+        # Read vs write is the leading SQL keyword, which is exact for every
+        # statement this store issues and is the only classification available
+        # without parsing SQL. `transaction` forwards to the real handle while
+        # the statements INSIDE it still arrive here, so a wholesale
+        # `replace_items!` is counted as the N writes it performs.
+        class CountingDb
+          def initialize(db)
+            @db      = db
+            @reads   = 0
+            @writes  = 0
+            @ms      = 0.0
+          end
+
+          def execute(sql, *rest, &blk)
+            started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            @db.execute(sql, *rest, &blk)
+          ensure
+            @ms += (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000
+            write?(sql) ? @writes += 1 : @reads += 1
+          end
+
+          # Session-lifetime totals. A span publishes only the delta across its
+          # own interval, which cannot double-count a nested span — a delta over
+          # an interval is exactly what nesting means.
+          def counters = { db_reads: @reads, db_writes: @writes, db_ms: @ms.round }
+
+          def method_missing(name, *args, &blk)
+            @db.respond_to?(name) ? @db.send(name, *args, &blk) : super
+          end
+
+          def respond_to_missing?(name, include_private = false)
+            @db.respond_to?(name, include_private) || super
+          end
+
+          private
+
+          WRITE = /\A\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.freeze
+
+          def write?(sql) = WRITE.match?(sql.to_s)
+        end
+
+        attr_reader :db, :path
+
+        # Optional progression journal. When wired, every mutation below also
+        # emits a delta, so the change log is generic CDC over the WHOLE
+        # knowledgebase (rooms, exits, entities, sightings, encounters, player
+        # state), not a hand-picked subset. The journal owns change-detection, so
+        # upserting an unchanged value writes nothing — no-ops are free here, and
+        # the field-level keys make per-field volume measurable after the fact.
+        attr_accessor :journal
+
+        # `sqlite3` is required lazily, the same posture `onnxruntime` already
+        # has: a checkout without the gem still boots, and only a caller that
+        # actually wants memory pays for it.
+        def self.open(path)
+          begin
+            require "sqlite3"
+          rescue LoadError => e
+            raise Unavailable, "the sqlite3 gem is not installed, so the agent has no memory (#{e.message})"
+          end
+
+          db = SQLite3::Database.new(path.to_s)
+          db.results_as_hash = true
+
+          # This is a game journal, not a ledger; and the monitor reads it while
+          # we write it.
+          db.execute("PRAGMA journal_mode=WAL")     # readers never block the writer
+          db.execute("PRAGMA synchronous=NORMAL")
+          db.execute("PRAGMA foreign_keys=ON")
+          db.execute("PRAGMA busy_timeout=5000")
+
+          Schema.migrate!(db)
+          new(db, path)
+        end
+
+        # The store for a resolved boukensha dir. Mirrors mud_monitor's own
+        # MUD_KNOWLEDGE_DB override so an operator can point both halves at one
+        # file without editing two configs.
+        def self.for_dir(dir)
+          open(ENV.fetch("MUD_KNOWLEDGE_DB", File.join(dir.to_s, FILENAME)))
+        end
+
+        def initialize(db, path = nil)
+          # Every query in this class funnels through @db, so ONE proxy at
+          # construction instruments all 26 `execute` call sites without
+          # touching a single one of them. The PRAGMAs and Schema.migrate! in
+          # `.open` run against the raw handle, BEFORE the wrap — correctly, as
+          # those are boot, not work.
+          @db   = db.is_a?(CountingDb) ? db : CountingDb.new(db)
+          @path = path
+        end
+
+        # The meter Logger#operation reads at span open and close. Counters, not
+        # statements: every SQL statement as its own transcript entry would bury
+        # the narrative under ~20 rows per survey to answer a question nobody
+        # asks per-statement. What is wanted is the shape of the work — this
+        # operation read 6 rows and wrote 11, in 3ms.
+        def counters = @db.counters
+
+        def close = @db.close
+
+        # ---------- player ------------------------------------------------
+
+        # Always a Hash — the single row if it exists, an empty one if not, so
+        # no caller has to branch on "have we ever run before".
+        def player
+          row(@db.execute("SELECT * FROM player_state WHERE id = 1").first) || {}
+        end
+
+        # Merge non-nil fields into the single row. Nil means "no reading this
+        # time", never "clear it": a `poll` that returns nothing must not wipe
+        # the level we learned from the last `check(score)`.
+        def update_player!(**fields)
+          fields = fields.compact
+          return if fields.empty?
+
+          fields[:updated_at] = now
+          cols = fields.keys
+          @db.execute(
+            "INSERT INTO player_state (id, #{cols.join(', ')}) VALUES (1, #{(['?'] * cols.size).join(', ')}) " \
+            "ON CONFLICT(id) DO UPDATE SET #{cols.map { |c| "#{c} = excluded.#{c}" }.join(', ')}",
+            fields.values
+          )
+          capture_player!(fields)
+        end
+
+        def level = player[:level]
+
+        # ---------- skills (EARNED) ---------------------------------------
+
+        # Upserted in place, the shape of remember_entity: a skill the agent
+        # knows does not stop being known because this reading did not mention
+        # it, so nothing here ever deletes. `learned_level` is stamped once, on
+        # the reading that first saw the skill KNOWN — after that it is the
+        # answer to "when did I get this", and re-learning must not move it.
+        def upsert_skills!(skills)
+          rows = Array(skills).reject { |s| s[:name].to_s.strip.empty? }
+          return if rows.empty?
+
+          t = now
+          @db.transaction do
+            rows.each do |s|
+              learned = s[:learned] ? 1 : 0
+              @db.execute(
+                "INSERT INTO player_skills (name, proficiency, learned, kind, learned_level, first_seen_at, last_seen_at) " \
+                "VALUES (?, ?, ?, ?, ?, ?, ?) " \
+                "ON CONFLICT(name) DO UPDATE SET " \
+                "proficiency   = COALESCE(excluded.proficiency, player_skills.proficiency), " \
+                "learned       = excluded.learned, " \
+                "kind          = COALESCE(excluded.kind, player_skills.kind), " \
+                "learned_level = COALESCE(player_skills.learned_level, excluded.learned_level), " \
+                "last_seen_at  = excluded.last_seen_at",
+                [s[:name].to_s, s[:proficiency], learned, s[:kind],
+                 (s[:learned] ? level : nil), t, t]
+              )
+            end
+          end
+          # The grade is the meaningful series — "armor: not learned -> good" is
+          # a progression event. The journal change-detects, so re-reading the
+          # same listing every practice writes nothing.
+          rows.each { |s| jupsert("skill", "#{s[:name]}:proficiency", s[:proficiency]) }
+        end
+
+        def skills
+          @db.execute("SELECT * FROM player_skills ORDER BY name").map { |r| row(r) }
+        end
+
+        # ---------- items (VOLATILE snapshot) -----------------------------
+
+        # Wholesale replace, in ONE transaction — update_player!'s "overwrite,
+        # don't accumulate" with N rows instead of one. A dropped item vanishes
+        # the instant the next snapshot lands, which is the entire point: the
+        # agent must never read back a bag it no longer has.
+        #
+        # The delete is scoped to the `location` being replaced, so a fresh
+        # `inventory` read never wipes the last known `equipment` and vice
+        # versa. An EMPTY list is a legitimate snapshot ("the pack is empty")
+        # and clears the table; refusing to read at all is the caller's job,
+        # not this method's — see Hooks#capture_items.
+        def replace_items!(location:, items:)
+          loc = location.to_s
+          raise ArgumentError, "unknown item location #{loc.inspect}" unless %w[inventory equipped].include?(loc)
+
+          t = now
+          @db.transaction do
+            @db.execute("DELETE FROM player_items WHERE location = ?", [loc])
+            Array(items).each do |i|
+              descr = i[:descr].to_s
+              next if descr.empty?
+
+              @db.execute(
+                "INSERT INTO player_items (location, worn_on, keyword, descr, quantity, updated_at) " \
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [loc, i[:worn_on], i[:keyword], descr, (i[:quantity] || 1).to_i, t]
+              )
+            end
+          end
+          # Stamped only on a real replacement, which is what makes staleness
+          # honest: a mutation with no following read leaves this untouched and
+          # the monitor says "snapshot as of T" rather than inventing a delta.
+          update_player!(items_updated_at: t)
+        end
+
+        def items(location: nil)
+          sql    = "SELECT * FROM player_items"
+          params = []
+          if location
+            sql += " WHERE location = ?"
+            params << location.to_s
+          end
+          @db.execute("#{sql} ORDER BY location, id", params).map { |r| row(r) }
+        end
+
+        # ---------- rooms -------------------------------------------------
+
+        def rooms_by_weak(fingerprint)
+          @db.execute("SELECT * FROM rooms WHERE weak_fingerprint = ? ORDER BY id", [fingerprint]).map { |r| row(r) }
+        end
+
+        def room(id)
+          return nil unless id
+
+          row(@db.execute("SELECT * FROM rooms WHERE id = ?", [id]).first)
+        end
+
+        # Rooms whose name matches exactly. Backed by `idx_rooms_name`, which is
+        # NOT `COLLATE NOCASE` — so this exact-case form is the only one that
+        # uses the index, and it is the fast path a destination lookup takes
+        # first. Returns MANY: names are not unique, and `provisional` rooms mean
+        # the same physical place can legitimately be several rows. Confirmed
+        # rows sort first so a caller taking `.first` gets the better one.
+        def rooms_by_name(name)
+          return [] if name.to_s.strip.empty?
+
+          @db.execute(
+            "SELECT * FROM rooms WHERE name = ? " \
+            "ORDER BY CASE confidence WHEN 'provisional' THEN 1 ELSE 0 END, id",
+            [name.to_s]
+          ).map { |r| row(r) }
+        end
+
+        # Substring search, for "did you mean" suggestions and for a destination
+        # the caller half-remembered ("bakery" → "The Cozy Bakery"). A table scan
+        # by construction — `LIKE '%x%'` cannot use `idx_rooms_name` — which is
+        # fine against the hundreds of rooms an agent actually walks. If this
+        # ever needs to serve the full ~12.7k-room world, the answer is an FTS5
+        # virtual table over `name || ' ' || description` (FTS5 is compiled into
+        # the SQLite this ships against), not a bigger index.
+        def search_rooms(term, limit: 5)
+          return [] if term.to_s.strip.empty?
+
+          @db.execute(
+            "SELECT * FROM rooms WHERE name LIKE ? " \
+            "ORDER BY CASE confidence WHEN 'provisional' THEN 1 ELSE 0 END, length(name), id LIMIT ?",
+            ["%#{term.to_s.strip}%", limit.to_i]
+          ).map { |r| row(r) }
+        end
+
+        def create_room(name:, description:, weak_fingerprint:, strong_fingerprint: nil,
+                        look_candidates: nil, confidence: "confirmed", surveyed: false)
+          t = now
+          @db.execute(
+            "INSERT INTO rooms (weak_fingerprint, strong_fingerprint, confidence, name, description, " \
+            "look_candidates, first_seen_at, last_seen_at, visit_count, surveyed_at) " \
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            [weak_fingerprint, strong_fingerprint, confidence, name, description,
+             look_candidates && JSON.generate(look_candidates), t, t, (surveyed ? t : nil)]
+          )
+          id = @db.last_insert_row_id
+          jevent("room", "create", id: id, name: name, confidence: confidence, surveyed: surveyed)
+          id
+        end
+
+        # A revisit. This is the call that replaces five MUD round trips.
+        def touch_room(id)
+          @db.execute("UPDATE rooms SET visit_count = visit_count + 1, last_seen_at = ? WHERE id = ?", [now, id])
+          jevent("room", "visit", id: id)
+        end
+
+        # Promote a room the survey has now fully resolved: the strong
+        # fingerprint exists only once `check(exits)` has been paid for.
+        def mark_surveyed!(id, strong_fingerprint: nil, look_candidates: nil, confidence: nil)
+          sets = { surveyed_at: now, last_seen_at: now }
+          sets[:strong_fingerprint] = strong_fingerprint if strong_fingerprint
+          sets[:look_candidates]    = JSON.generate(look_candidates) if look_candidates
+          sets[:confidence]         = confidence if confidence
+          @db.execute("UPDATE rooms SET #{sets.keys.map { |k| "#{k} = ?" }.join(', ')} WHERE id = ?",
+                      sets.values + [id])
+          jevent("room", "surveyed", id: id)
+        end
+
+        # ---------- exits -------------------------------------------------
+
+        def exits_for(room_id)
+          @db.execute("SELECT * FROM room_exits WHERE room_id = ? ORDER BY direction", [room_id]).map { |r| row(r) }
+        end
+
+        # THE WHOLE WALKABLE GRAPH, in one statement.
+        #
+        # Deliberately not `exits_for` in a loop: `CountingDb` counts every
+        # `execute`, so a per-node BFS would make `db_reads` scale with the map
+        # and drown the counter that exists to price the agent's real work. One
+        # query, one increment, regardless of graph size.
+        #
+        # Only linked edges: a NULL `target_room_id` is the frontier — an exit we
+        # know exists but have never walked — and there is nothing to route
+        # through. Callers wanting the frontier ask for it by name.
+        def linked_exits
+          @db.execute(
+            "SELECT room_id, direction, target_room_id, " \
+            "COALESCE(failure_count, 0) AS failure_count, " \
+            "COALESCE(danger, 0) AS danger, " \
+            "COALESCE(traversals, 0) AS traversals " \
+            "FROM room_exits WHERE target_room_id IS NOT NULL ORDER BY room_id, direction"
+          ).map { |r| row(r) }
+        end
+
+        # The unwalked edges leading out of one room. Backed by the partial index
+        # `idx_exits_frontier`. This is what turns "I cannot route you there"
+        # into "…but here is where the map runs out".
+        def frontier_exits_for(room_id)
+          @db.execute(
+            "SELECT * FROM room_exits WHERE room_id = ? AND target_room_id IS NULL ORDER BY direction",
+            [room_id]
+          ).map { |r| row(r) }
+        end
+
+        # Unwalked exits whose DESTINATION NAME we already know.
+        #
+        # `check(exits)` turns `n e s w` into `north - The Cozy Bakery`, so the
+        # agent routinely knows the name of a room it has never stood in — on a
+        # real map, every single frontier exit had one. Those names were
+        # write-only until now: `rooms` had no row, so `navigate` answered "no
+        # room called that in your map" about a place it could name and point at.
+        #
+        # Returned as approach edges (`room_id` + `direction`), not as rooms,
+        # because that is honestly all we have: somewhere reachable, and the one
+        # step that leaves the map.
+        def frontier_targets(name, fuzzy: false)
+          return [] if name.to_s.strip.empty?
+
+          needle = name.to_s.strip.downcase
+          clause = fuzzy ? "LIKE ?" : "= ?"
+          needle = "%#{needle}%" if fuzzy
+          @db.execute(
+            "SELECT room_id, direction, target_name FROM room_exits " \
+            "WHERE target_room_id IS NULL AND target_name IS NOT NULL " \
+            "AND LOWER(target_name) #{clause} ORDER BY room_id, direction", [needle]
+          ).map { |r| row(r) }
+        end
+
+        def exit_at(room_id, direction)
+          return nil unless room_id && direction
+
+          row(@db.execute("SELECT * FROM room_exits WHERE room_id = ? AND direction = ?",
+                          [room_id, direction.to_s]).first)
+        end
+
+        # A blocked / locked / interrupted walk on this edge. Caps so a single
+        # cursed door cannot dominate the whole graph forever.
+        def record_exit_failure!(room_id, direction, cap: 20)
+          return unless room_id && direction
+
+          @db.execute(
+            "UPDATE room_exits SET failure_count = MIN(COALESCE(failure_count, 0) + 1, ?) " \
+            "WHERE room_id = ? AND direction = ?",
+            [cap, room_id, direction.to_s]
+          )
+          jevent("exit", "failure", room_id: room_id, direction: direction.to_s)
+        end
+
+        def set_exit_danger!(room_id, direction, danger)
+          return unless room_id && direction
+
+          @db.execute(
+            "UPDATE room_exits SET danger = ? WHERE room_id = ? AND direction = ?",
+            [danger.to_f, room_id, direction.to_s]
+          )
+          jupsert("exit", "#{room_id}:#{direction}:danger", danger.to_f)
+        end
+
+        # Record what the room says its exits are. `dirs` is the free autoexit
+        # line; `targets` is the { dir => name } that cost a check(exits) and may
+        # be empty. Neither ever clears a target_room_id we have already earned.
+        def record_exits!(room_id, dirs: [], targets: {})
+          t = now
+          (Array(dirs) | targets.keys.map(&:to_s)).each do |dir|
+            name = targets[dir] || targets[dir.to_sym]
+            @db.execute(
+              "INSERT INTO room_exits (room_id, direction, target_name, last_seen_at) VALUES (?, ?, ?, ?) " \
+              "ON CONFLICT(room_id, direction) DO UPDATE SET " \
+              "target_name = COALESCE(excluded.target_name, room_exits.target_name), last_seen_at = excluded.last_seen_at",
+              [room_id, dir.to_s, name, t]
+            )
+            # nil names are swallowed by upsert (no reading), so re-recording the
+            # same autoexit line every turn is silent; only a newly-learned
+            # target_name lands.
+            jupsert("exit", "#{room_id}:#{dir}:target_name", name)
+          end
+        end
+
+        # We walked it and arrived somewhere known: the edge is now real. This
+        # is the write that turns a `?` into a `✓` in the state block, and the
+        # only place `target_room_id` is ever set.
+        def link_exit!(room_id, direction, target_room_id)
+          return unless room_id && direction && target_room_id
+
+          @db.execute(
+            "INSERT INTO room_exits (room_id, direction, target_room_id, traversals, last_seen_at) " \
+            "VALUES (?, ?, ?, 1, ?) " \
+            "ON CONFLICT(room_id, direction) DO UPDATE SET " \
+            "target_room_id = excluded.target_room_id, traversals = room_exits.traversals + 1, " \
+            "last_seen_at = excluded.last_seen_at",
+            [room_id, direction.to_s, target_room_id, now]
+          )
+          jupsert("exit", "#{room_id}:#{direction}:target_room_id", target_room_id)
+        end
+
+        # We walked this way and landed somewhere the exits table did not name.
+        # The room we are standing in wins.
+        def rename_exit_target!(room_id, direction, name)
+          return unless room_id && direction && name
+
+          @db.execute("UPDATE room_exits SET target_name = ? WHERE room_id = ? AND direction = ?",
+                      [name, room_id, direction.to_s])
+          jupsert("exit", "#{room_id}:#{direction}:target_name", name)
+        end
+
+        # A room cannot move; a stale edge can. So a conflict between the edge we
+        # walked and the room we actually landed in is resolved in the room's
+        # favour, and the edge pays for it.
+        def demote_exit!(room_id, direction)
+          return unless room_id && direction
+
+          @db.execute(
+            "UPDATE room_exits SET traversals = MAX(traversals - 1, 0), target_room_id = NULL " \
+            "WHERE room_id = ? AND direction = ?", [room_id, direction.to_s]
+          )
+          jevent("exit", "demote", room_id: room_id, direction: direction.to_s)
+        end
+
+        # ---------- entities ----------------------------------------------
+
+        # A remembered mob/object TYPE, with the one piece of level-relative
+        # judgement flagged rather than silently served: `threat_fresh` is false
+        # once the player has levelled past the reading, because "you could take
+        # him" measured twenty levels ago is precisely the confident lie the
+        # Strategy section is trying to avoid.
+        def entity_for(descr, kind: "mob")
+          r = row(@db.execute("SELECT * FROM entities WHERE kind = ? AND descr = ?", [kind, descr.to_s]).first)
+          return nil unless r
+
+          r[:equipment]    = r[:equipment] ? (JSON.parse(r[:equipment]) rescue nil) : nil
+          r[:threat_fresh] = !r[:threat].nil? && r[:threat_level] == level
+          r
+        end
+
+        # The reverse lookup combat needs: the agent attacks `fido`, and the
+        # encounter has to be filed against the type that keyword resolved to.
+        # Most recently seen wins, because that is the one we are standing next
+        # to.
+        def entity_by_keyword(keyword, kind: "mob")
+          return nil unless keyword
+
+          row(@db.execute("SELECT * FROM entities WHERE kind = ? AND keyword = ? ORDER BY last_seen_at DESC LIMIT 1",
+                          [kind, keyword.to_s.downcase]).first)
+        end
+
+        def remember_entity(kind:, descr:, keyword: nil, threat: nil, equipment: nil)
+          t = now
+          @db.execute(
+            "INSERT INTO entities (kind, descr, keyword, equipment, threat, threat_level, first_seen_at, last_seen_at) " \
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " \
+            "ON CONFLICT(kind, descr) DO UPDATE SET " \
+            "keyword      = COALESCE(excluded.keyword,      entities.keyword), " \
+            "equipment    = COALESCE(excluded.equipment,    entities.equipment), " \
+            "threat       = COALESCE(excluded.threat,       entities.threat), " \
+            "threat_level = COALESCE(excluded.threat_level, entities.threat_level), " \
+            "seen_count   = entities.seen_count + 1, " \
+            "last_seen_at = excluded.last_seen_at",
+            [kind, descr.to_s, keyword, equipment && JSON.generate(equipment), threat, (threat && level), t, t]
+          )
+          id = @db.execute("SELECT id FROM entities WHERE kind = ? AND descr = ?", [kind, descr.to_s]).first["id"]
+          # The appraisal is the meaningful delta over time; descr/keyword are
+          # static, so they are not journaled as a series.
+          jupsert("entity", "#{id}:threat", threat)
+          id
+        end
+
+        def record_sighting!(entity_id:, room_id:, count: 1)
+          return unless entity_id && room_id
+
+          t = now
+          @db.execute(
+            "INSERT INTO entity_sightings (entity_id, room_id, count, sighting_count, first_seen_at, last_seen_at) " \
+            "VALUES (?, ?, ?, 1, ?, ?) " \
+            "ON CONFLICT(entity_id, room_id) DO UPDATE SET " \
+            "count = excluded.count, sighting_count = entity_sightings.sighting_count + 1, " \
+            "last_seen_at = excluded.last_seen_at",
+            [entity_id, room_id, count, t, t]
+          )
+          jupsert("sighting", "#{entity_id}:#{room_id}:count", count)
+        end
+
+        # ---------- encounters --------------------------------------------
+
+        def record_encounter!(outcome:, room_id: nil, entity_id: nil, hp_before: nil, hp_after: nil)
+          @db.execute(
+            "INSERT INTO encounters (room_id, entity_id, player_level, outcome, hp_before, hp_after, at) " \
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [room_id, entity_id, level, outcome.to_s, hp_before, hp_after, now]
+          )
+          jevent("encounter", outcome.to_s, room_id: room_id, entity_id: entity_id,
+                                            player_level: level, hp_before: hp_before, hp_after: hp_after)
+          @db.last_insert_row_id
+        end
+
+        # Every outcome we have ever had against this type, worst news first.
+        # `died` sorts above `fled` above `won` because that is the order the
+        # agent needs to read them in when deciding whether to swing.
+        def encounters_for(entity_id)
+          return [] unless entity_id
+
+          @db.execute(
+            "SELECT * FROM encounters WHERE entity_id = ? " \
+            "ORDER BY CASE outcome WHEN 'died' THEN 0 WHEN 'fled' THEN 1 WHEN 'abandoned' THEN 2 ELSE 3 END, at DESC",
+            [entity_id]
+          ).map { |r| row(r) }
+        end
+
+        # ---------- counters ----------------------------------------------
+
+        # What mud_monitor's "rooms known vs rooms that exist" diff reads, and
+        # the only honest measure of whether any of this is working.
+        def stats
+          {
+            rooms:      scalar("SELECT COUNT(*) FROM rooms"),
+            surveyed:   scalar("SELECT COUNT(*) FROM rooms WHERE surveyed_at IS NOT NULL"),
+            frontier:   scalar("SELECT COUNT(*) FROM room_exits WHERE target_room_id IS NULL"),
+            entities:   scalar("SELECT COUNT(*) FROM entities"),
+            encounters: scalar("SELECT COUNT(*) FROM encounters"),
+            skills:     scalar("SELECT COUNT(*) FROM player_skills"),
+            items:      scalar("SELECT COUNT(*) FROM player_items")
+          }
+        end
+
+        private
+
+        # ---------- change journal helpers --------------------------------
+        # All no-ops when no journal is wired; `upsert` itself is internally
+        # guarded, so a broken journal never breaks a store write.
+
+        # A keyed-value delta (change-detected: unchanged values write nothing).
+        # Use for anything re-written frequently with often-identical values —
+        # player fields, exit targets, entity threat, sighting counts.
+        def jupsert(stream, key, value)
+          @journal&.upsert(stream: stream, key: key.to_s, value: value)
+        end
+
+        # A discrete occurrence (always appended). Use for genuinely one-off
+        # writes — a room discovered, an encounter resolved.
+        def jevent(stream, op, **fields)
+          @journal&.event(stream: stream, op: op.to_s, **fields)
+        end
+
+        # Player_state is one row of scalars, so each written field becomes its
+        # own `stat` series keyed by column. `updated_at` is skipped — it changes
+        # on every write and would be pure noise.
+        def capture_player!(fields)
+          fields.each do |col, val|
+            next if col == :updated_at
+
+            jupsert("stat", col, val)
+          end
+        end
+
+        def scalar(sql) = @db.execute(sql).first.values.first.to_i
+
+        def now = Time.now.utc.iso8601
+
+        # sqlite3 hands back string keys; everything above this line speaks
+        # symbols. One conversion, in one place.
+        def row(hash)
+          return nil unless hash
+
+          hash.each_with_object({}) { |(k, v), out| out[k.to_sym] = v if k.is_a?(String) }
+        end
+      end
+    end
+  end
+end

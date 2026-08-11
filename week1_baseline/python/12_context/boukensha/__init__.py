@@ -15,6 +15,7 @@ from .errors import UnknownToolError, ApiError, LoopError, UnsupportedModelError
 from .registry import Registry
 from .prompt_builder import PromptBuilder
 from .logger import Logger
+from .telemetry import build as build_telemetry
 from .client import Client
 from .agent import Agent
 from .run_dsl import RunDSL
@@ -184,6 +185,7 @@ def run(
     client = Client(builder)
     logger = Logger(
         log=log,
+        telemetry=build_telemetry(config=cfg),
         snapshot={
             "max_iterations": cfg.agent_max_iterations(),
             "max_turn_tokens": cfg.agent_max_turn_tokens(),
@@ -290,6 +292,7 @@ def repl(
     client = Client(builder)
     logger = Logger(
         log=log,
+        telemetry=build_telemetry(config=cfg),
         snapshot={
             "max_iterations": cfg.agent_max_iterations(),
             "max_turn_tokens": cfg.agent_max_turn_tokens(),

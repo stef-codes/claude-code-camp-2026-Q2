@@ -1,0 +1,49 @@
+version: 1
+id: island_recovery
+description: >
+  Standing in a room with no outgoing walked edge, and a same-named room already
+  visited elsewhere. navigate must take the named frontier exit as a one-step
+  provisional route instead of returning no_route.
+
+initial_state:
+  start: Dirt Road
+  rooms:
+    - name: Dirt Road
+      description: A dusty track ending at a clearing's edge.
+      exits: [south, east]
+    - name: Edge of a Clearing
+      description: Trees thin here; the road continues south of memory.
+      exits: [north]
+    - name: Somewhere Else
+      description: A disconnected scrap of map the agent once walked.
+      exits: [west]
+  edges:
+    # Visited "Edge of a Clearing" exists, but nothing connects Dirt Road to it.
+    - [Somewhere Else, west, Edge of a Clearing]
+    - [Edge of a Clearing, north, Somewhere Else]
+  frontier:
+    - [Dirt Road, south, Edge of a Clearing]
+
+driver:
+  type: transcript
+  fixture: ../../test/fixtures/evaluation/island_recovery.json
+
+action:
+  type: navigate
+  destination: Edge of a Clearing
+
+limits:
+  max_commands: 5
+
+assertions:
+  navigation_ok: true
+  reason: arrived
+  reached_room: Edge of a Clearing
+  steps_eq: 1
+  moves_eq: [south]
+  provisional: true
+  deaths: 0
+
+scoring:
+  required: [navigation_ok, reached_room, provisional]
+  expected_steps: 1

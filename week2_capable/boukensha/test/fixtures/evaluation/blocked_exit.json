@@ -1,0 +1,14 @@
+{
+  "_comment": [
+    "The refusal is verbatim `text`, not a room: it is exactly what tbaMUD says",
+    "and it deliberately carries no exits line, so RoomParser's `complete?`",
+    "rejects it. That is how the Navigator stops without knowing a single MUD",
+    "string — the test is a whitelist on success, never a blacklist on failure."
+  ],
+  "responses": {
+    "look": [{ "room": "Town Square" }],
+    "poll": "",
+    "move:north": [{ "room": "Main Street" }],
+    "move:east": [{ "text": "The door is closed.\r\n\r\n100H 100M 100V > " }]
+  }
+}

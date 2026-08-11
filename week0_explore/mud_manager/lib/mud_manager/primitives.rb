@@ -29,6 +29,12 @@ module MudManager
     DOOR_VERBS    = %w[open close lock unlock pick].freeze
     LOOK_MODES    = %w[look read].freeze
     LOOK_PREPS    = %w[in at north east south west up down].freeze
+    # Phrasings that mean "the room I am in" rather than naming a thing in it.
+    # Matched after strip/downcase/whitespace-squeeze — see Primitives.look.
+    ROOM_ALIASES  = [
+      "room", "the room", "this room", "current room", "the current room",
+      "here", "surroundings", "my surroundings", "the surroundings", "area"
+    ].freeze
     INFO_SELF     = %w[score inventory equipment gold exits time weather
                        levels wimpy toggle where].freeze
     INFO_WORLD    = %w[who users help credits news info motd policies
@@ -153,11 +159,31 @@ module MudManager
 
     def get(obj, container: nil, count: nil)
       require_str!(obj, :obj)
-      parts = ["get"]
-      parts << count.to_s if count
-      parts << obj
-      parts << container if container
-      cmd(:get, "get", parts.join(" "), obj: obj, container: container, count: count)
+      obj = obj.to_s.strip
+      container = container.to_s.strip
+      container = nil if container.empty?
+
+      # CircleMUD parses "get 1 sword" as object "1", container "sword"
+      # → "A sword is not a container." Never emit a bare leading integer.
+      # Nth-match disambiguation uses dotted form: get 2.sword
+      # Loot uses: get all corpse (count must not apply).
+      n = begin
+            count.nil? ? nil : Integer(count)
+          rescue ArgumentError, TypeError
+            nil
+          end
+
+      raw =
+        if obj.casecmp("all").zero?
+          container ? "get all #{container}" : "get all"
+        elsif n && n > 1
+          keyword = obj.split(/\s+/).first
+          container ? "get #{n}.#{keyword} #{container}" : "get #{n}.#{keyword}"
+        else
+          container ? "get #{obj} #{container}" : "get #{obj}"
+        end
+
+      cmd(:get, "get", raw, obj: obj, container: container, count: count)
     end
 
     def drop(mode, obj, count: nil)
@@ -231,6 +257,22 @@ module MudManager
       # Normalize empty strings → nil so callers can pass "" for "no value"
       target      = nil if target.to_s.strip.empty?
       preposition = nil if preposition.to_s.strip.empty?
+      # "Describe where I am" is not a target. Models reach for `target: "room"`
+      # constantly — the tool description says not to, in prose, competing with
+      # 25 sibling tools, and loses. The MUD has no object called "room", so it
+      # answers `look at room` with "You do not see that here" and the room
+      # description becomes unreachable through this tool. Treating the synonym
+      # as "no target" is what the caller meant; `examine` remains the way to
+      # inspect a real object precisely.
+      target = nil if target && ROOM_ALIASES.include?(target.strip.downcase.squeeze(" "))
+      # A preposition with nothing to point at builds `look at`, which the MUD
+      # answers with "Look at what?" — the room description is then
+      # unreachable through this tool. The schema lets a caller send
+      # `preposition` without `target` (both are optional and independent), and
+      # models do exactly that: the tool description's "call with NO arguments"
+      # plea loses to 25 sibling tools. Dropping the dangling preposition
+      # degrades those calls to a plain `look`, which is what was meant.
+      preposition = nil if target.nil?
       verb = check_enum!(mode, LOOK_MODES, :mode)
       check_enum!(preposition, LOOK_PREPS, :preposition) if preposition
       parts = [verb]
