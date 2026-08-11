@@ -35,6 +35,12 @@ module Boukensha
     # this can never grant something settings.yaml didn't.
     attr_accessor :turn_policy
 
+    # Agent loop action budget for THIS user turn (max_iterations). Hooks
+    # surfaces it in the state block so the model can finish before wrap-up.
+    # `action_n` is the current iteration (1-based once the loop has started);
+    # `action_max` is the ceiling. Nil until the Agent sets them.
+    attr_accessor :action_n, :action_max
+
     def initialize(system:, context_window: 200_000, working_dir: nil, compaction_threshold: 0.85)
       @system               = system
       @context_window       = context_window

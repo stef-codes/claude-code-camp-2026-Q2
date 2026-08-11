@@ -32,10 +32,13 @@ module Boukensha
       # `dark`        — last look/move was pitch black; room is not established.
       # `last_known`  — optional hint from player_state (not live position):
       #                 { room_name:, room_id:, from_name:, from_id:, direction: }
+      # `action_n` / `action_max` — agent loop budget for this user turn
+      #                 (max_iterations); omit when unknown.
       def render(room:, exits: [], here: [], player: {}, events: [], first_visit: false,
                  candidates: nil, ambiguity: nil, mode: nil, location_candidates: nil,
-                 dark: false, last_known: nil)
-        return nil if room.nil? && player.to_h.empty? && events.empty? && !dark
+                 dark: false, last_known: nil, action_n: nil, action_max: nil)
+        return nil if room.nil? && player.to_h.empty? && events.empty? && !dark &&
+                      !(action_n && action_max.to_i.positive?)
 
         lines = []
         lines << location_line(room, ambiguity, mode, dark: dark)
@@ -46,6 +49,7 @@ module Boukensha
         lines << candidates_line(candidates) if candidates && !candidates.empty?
         lines << scored_candidates_line(location_candidates) if location_candidates && !location_candidates.empty?
         lines << you_line(player)  if player && !player.to_h.empty?
+        lines << actions_line(action_n, action_max)
         lines << events_line(events) if events && !events.empty?
         lines.compact.join("\n")
       end
@@ -144,6 +148,17 @@ module Boukensha
         bits << "#{p[:gold]} gold" if p[:gold]
         bits << p[:position] if p[:position]
         bits.empty? ? nil : "you: #{bits.join(' · ')}"
+      end
+
+      # Agent loop budget (max_iterations). Same “action limit” wrap_up names —
+      # shown every model call so the model can finish before the ceiling.
+      def actions_line(n, max)
+        max = max.to_i
+        n   = n.to_i
+        return nil unless max.positive? && n.positive?
+
+        left = [max - n, 0].max
+        "actions: #{n}/#{max} this turn · #{left} left"
       end
 
       # True for one instant, so they ride in the block for exactly the iteration

@@ -16,7 +16,7 @@ You do NOT choose travel directions yourself. Never invent north/east/south/west
 When the user wants a bakery and its menu (shop stock):
 
 1. Decide the bakery name from their words (e.g. "the bakery", "Cozy Bakery") — use their name or an unambiguous match on your map / exits line. Do not invent a room title.
-2. If you are already in a bakery room (Hooks may immortal-Relocate you there when stranded), skip travel and `shop` with action `list` for the menu.
+2. If you are already in a bakery room, skip travel and `shop` with action `list` for the menu.
 3. Otherwise prefer `navigate` to that name. A one-step provisional hop off an exits line is fine.
 4. On arrival, `shop` with action `list` and report that list as the menu. Do not substitute look, examine, or inventory for the menu.
 5. If `navigate` replies with useful frontier names (`unexplored from here: …`), call `navigate` on those names first (provisional hop). Only when there is no useful frontier left (`unknown_destination`, or `no_route`/`too_far` with nothing to hop), then `explore` briefly for that bakery; when found, `shop` list as above.
@@ -47,5 +47,9 @@ After a kill, coins and gear are **inside** the corpse, not the corpse object it
 
 - The reply often appends `unexplored from here: east→A Dark Alley`. Those names are navigable destinations — call `navigate` with the name (a one-step provisional walk off the edge of your map).
 - If those exits are useless or the MUD refuses them, call `retrace` to walk back along the path that brought you here. Retrace does not invent map edges; if there is no way back, it stops and says so.
+
+### Action limit
+
+The state block shows `actions: N/MAX this turn · L left`. That is your tool-round budget for this user message (not a MUD wait-state). When L is low, finish the goal or stop starting new travel; ask the user to continue on a new message when the budget is exhausted. Do **not** invent a reset via `send_raw`.
 
 Combat, shopping, social, examining, and skills use your other tools as before.

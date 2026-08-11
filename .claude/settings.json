@@ -75,7 +75,20 @@
       "Bash(ruby -rjson -e 'j=JSON.parse\\(File.read\\(\"test/fixtures/mud_transcripts.json\"\\)\\); puts j.keys.inspect; puts j[\"common_square\"].inspect[0,600]')",
       "Bash(chmod +x bin/boukensha-eval)",
       "Bash(echo \"EXIT=$?\")",
-      "Bash(set -e)"
+      "Bash(set -e)",
+      "Bash(ruby -i -pe 'sub\\(/^\\\\s+@store\\\\.demote_exit!\\\\\\(from_id, direction\\\\\\)$/, \"\"\\)' lib/boukensha/mud/hooks.rb)",
+      "Bash(ruby -i -pe 'gsub\\(/edge_repaired/, \"stale_edge_demoted\"\\)' test/test_evaluation_scorer.rb)",
+      "Bash(ruby -i -pe 'sub\\(/^\\\\s+@store\\\\.link_exit!\\\\\\(from_id, direction, room\\\\[:id\\\\]\\\\\\)$/, \"\"\\)' lib/boukensha/mud/hooks.rb)",
+      "Bash(ruby -rjson -e ' *)",
+      "Bash(ruby -i -pe 'sub\\(/^      @turn_budget       = TokenBudget\\\\.current$/, \"      @turn_budget       = nil\"\\)' lib/boukensha/agent.rb)",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 'select id,name,confidence from rooms where name like '\\\\''%baker%'\\\\'' or name like '\\\\''%bread%'\\\\'';')",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 'select e.room_id, r.name as from_room, e.direction, e.target_name, e.target_room_id from room_exits e join rooms r on r.id=e.room_id where e.target_name like '\\\\''%baker%'\\\\'';')",
+      "Bash(sqlite3 .boukensha/profiles/dummy/knowledge.sqlite3 'select '\\\\''rooms='\\\\''||count\\(*\\) from rooms; select '\\\\''exits='\\\\''||count\\(*\\)||'\\\\'' unwalked='\\\\''||sum\\(target_room_id is null\\) from room_exits; select '\\\\''position='\\\\''||current_room_id from player_state;')",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 'select count\\(*\\) as unwalked, sum\\(target_name is not null and target_name != '\\\\'''\\\\''\\) as named from room_exits where target_room_id is null;')",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 'select r.name as from_room, e.direction, e.target_name from room_exits e join rooms r on r.id=e.room_id where e.target_room_id is null and e.target_name is not null limit 8;')",
+      "Bash(sqlite3 -header -column .boukensha/profiles/dummy/knowledge.sqlite3 'select id,name from rooms where id=\\(select current_room_id from player_state\\);')",
+      "Bash(ruby -rjson -e 'd=JSON.parse\\(File.read\\(\"week0_explore/preview/data/world/wld/60.json\"\\)\\); r = d.is_a?\\(Hash\\) ? \\(d[\"rooms\"]||d.values.first\\) : d; puts r.class; puts JSON.pretty_generate\\(Array\\(r\\).first\\)[0,700]')",
+      "Bash(ruby -rjson -e 'r=JSON.parse\\(File.read\\(\"week0_explore/preview/data/world/wld/60.json\"\\)\\).first; puts r.keys.inspect')"
     ],
     "additionalDirectories": [
       "/Users/stefanie/code/claude-code-camp-2026-Q2/.boukensha/sessions",

@@ -93,6 +93,8 @@ module Boukensha
           end
 
           @iteration += 1
+          @context.action_n   = @iteration
+          @context.action_max = @max_iterations
           # `outcome` is nil while the turn keeps going (a tool_use round) and
           # the final text once the model stops — so a single non-nil check
           # after the span closes decides whether to loop again or return,

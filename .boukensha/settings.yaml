@@ -92,12 +92,13 @@ mud:
   port: 4000
   username: dummy
   password: helloworld
-  # Immortal Relocate targets (Hooks `goto` when stranded on a bakery goal).
-  # Midgaard zone 30 — room #3009 "The Bakery" (not the Cozy Bakery start).
+  # Midgaard bakery landmark (zone 30 #3009). Used as the navigate destination
+  # name. `auto: true` would immortal-goto when stranded; left off — walk only.
   landmarks:
     bakery:
       name: The Bakery
       room: 3009
+      auto: false
 
 # Tracing. Secrets and the OTLP endpoint live in .boukensha/.env (gitignored).
 # Contract is pinned to OpenTelemetry GenAI semantic conventions 1.37.0 --

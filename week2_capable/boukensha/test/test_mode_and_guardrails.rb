@@ -20,4 +20,16 @@ class TestModeAndGuardrails < Minitest::Test
     text = Boukensha::Mud::StateBlock.render(room: room, mode: :navigating)
     refute_includes text, "[navigating]"
   end
+
+  def test_state_block_tracks_action_limit
+    room = { name: "Bakery", visit_count: 1, description: "" }
+    text = Boukensha::Mud::StateBlock.render(room: room, action_n: 3, action_max: 25)
+    assert_includes text, "actions: 3/25 this turn · 22 left"
+  end
+
+  def test_state_block_omits_actions_when_unset
+    room = { name: "Bakery", visit_count: 1, description: "" }
+    text = Boukensha::Mud::StateBlock.render(room: room)
+    refute_includes text, "actions:"
+  end
 end

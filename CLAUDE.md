@@ -218,3 +218,17 @@ not needed for correctness.
   bug has recurred and needs the same fix: read the corresponding
   `ruby/NN_stepname/README.md`, diff it against the previous step's Ruby
   README, and rewrite.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues (`gh` CLI) on `stef-codes/claude-code-camp-2026-Q2`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default triage vocabulary — the five canonical roles, label string equal to role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

@@ -300,7 +300,7 @@ module Boukensha
           # anyway so the reads behind the `[here]` block are attributed to
           # rendering it rather than pooling into whatever ran last.
           during("state_render", "before_model") do
-            context.state_block = render_state
+            context.state_block = render_state(context: context)
             context.turn_policy = compute_turn_policy(context)
           end
         end
@@ -1189,7 +1189,7 @@ module Boukensha
 
       # =========================== rendering ================================
 
-      def render_state
+      def render_state(context: nil)
         room   = @current_room_id && @store.room(@current_room_id)
         events = @pending_events
         @pending_events = []
@@ -1205,7 +1205,9 @@ module Boukensha
           mode: @mode,
           location_candidates: (@ambiguity.to_i > 1 ? @location_candidates : nil),
           dark: @dark && room.nil?,
-          last_known: (@dark && room.nil? ? last_known_hint : nil)
+          last_known: (@dark && room.nil? ? last_known_hint : nil),
+          action_n: context&.action_n,
+          action_max: context&.action_max
         )
         # The prose and the look_candidates are sent ONCE, on arrival. Every
         # later iteration in the same room gets the name — the model has already
