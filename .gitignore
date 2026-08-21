@@ -13,12 +13,11 @@ week0_explore/preview/data/world/
 
 # The agent's own runtime state. knowledge.sqlite3 is the map it EARNED by
 # walking; committing it would ship one machine's exploration as if it were
-# source, and the monitor reads it live. Journal / telnet / manager logs stay
-# local. Session JSONL is committed so week-2 debugging and the journal can
-# cite real turns.
+# source, and the monitor reads it live. Telnet / manager logs stay local.
+# Session JSONL and the CDC journal are committed so week-2 debugging and
+# writeups can cite real turns.
 .boukensha/knowledge.sqlite3
 .boukensha/knowledge.sqlite3-*
-.boukensha/journal/
 .boukensha/telnet/
 .boukensha/manager/
 
@@ -26,10 +25,9 @@ week0_explore/preview/data/world/
 # it is configuration, it holds no secret (the password comes from settings.yaml
 # or a named env var), and a working example of one is worth having in a repo
 # whose whole point is teaching.
-# Session transcripts under profiles/*/sessions/ ARE tracked (see above).
+# Session transcripts and journal JSONL under profiles/*/ ARE tracked (see above).
 .boukensha/profiles/*/knowledge.sqlite3
 .boukensha/profiles/*/knowledge.sqlite3-*
-.boukensha/profiles/*/journal/
 .boukensha/profiles/*/telnet/
 .boukensha/profiles/*/manager/
 
